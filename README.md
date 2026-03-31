@@ -1,4 +1,4 @@
-# AutoR
+# AutoR: Human-Centered AI Research Co-pilot
 
 > A terminal-first research workflow runner for long-form AI-assisted research.
 
