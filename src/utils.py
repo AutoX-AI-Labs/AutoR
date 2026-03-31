@@ -484,21 +484,51 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             )
 
     if stage.number >= 7:
-        tex_files = [path for path in _existing_files(paths.writing_dir) if path.suffix.lower() in LATEX_SUFFIXES]
-        if not tex_files:
+        # Check main.tex exists (venue-agnostic — no longer hardcoded to NeurIPS)
+        main_tex = paths.writing_dir / "main.tex"
+        if not main_tex.exists():
             problems.append(
-                f"{stage.stage_title} requires LaTeX sources under workspace/writing."
-            )
-        elif not any(_looks_like_neurips_tex(path) for path in tex_files):
-            problems.append(
-                f"{stage.stage_title} requires a NeurIPS-style LaTeX manuscript in workspace/writing."
+                f"{stage.stage_title} requires main.tex under workspace/writing."
             )
 
+        # Check references.bib exists
+        bib_files = [p for p in _existing_files(paths.writing_dir) if p.suffix.lower() == ".bib"]
+        if not bib_files:
+            problems.append(
+                f"{stage.stage_title} requires references.bib under workspace/writing."
+            )
+
+        # Check sections/ directory has .tex files
+        sections_dir = paths.writing_dir / "sections"
+        if not sections_dir.exists() or not list(sections_dir.glob("*.tex")):
+            problems.append(
+                f"{stage.stage_title} requires section .tex files under workspace/writing/sections/."
+            )
+
+        # Check compiled PDF
         pdf_count = _count_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES)
         pdf_count += _count_files_with_suffixes(paths.artifacts_dir, PDF_SUFFIXES)
         if pdf_count == 0:
             problems.append(
-                f"{stage.stage_title} requires a compiled PDF manuscript under workspace/writing or workspace/artifacts."
+                f"{stage.stage_title} requires a compiled PDF under workspace/writing or workspace/artifacts."
+            )
+
+        # Check build_log.txt exists
+        if not (paths.artifacts_dir / "build_log.txt").exists():
+            problems.append(
+                f"{stage.stage_title} requires build_log.txt under workspace/artifacts."
+            )
+
+        # Check citation_verification.json exists
+        if not (paths.artifacts_dir / "citation_verification.json").exists():
+            problems.append(
+                f"{stage.stage_title} requires citation_verification.json under workspace/artifacts."
+            )
+
+        # Check self_review.json exists
+        if not (paths.artifacts_dir / "self_review.json").exists():
+            problems.append(
+                f"{stage.stage_title} requires self_review.json under workspace/artifacts."
             )
 
     if stage.number >= 8:
@@ -611,13 +641,6 @@ def _count_files_with_suffixes(directory: Path, suffixes: set[str]) -> int:
 
 def _count_non_markdown_files(directory: Path) -> int:
     return sum(1 for path in _existing_files(directory) if path.suffix.lower() not in {".md", ".txt"})
-
-
-def _looks_like_neurips_tex(path: Path) -> bool:
-    if not path.exists() or path.suffix.lower() != ".tex":
-        return False
-    text = read_text(path).lower()
-    return "neurips" in text and "\\documentclass" in text
 
 
 def canonicalize_stage_markdown(

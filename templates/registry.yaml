@@ -1,0 +1,96 @@
+# Template Registry — config-driven venue templates for Stage 07
+#
+# Claude downloads/copies the official template at writing time based on
+# the target venue configured for the run.  The registry only stores
+# metadata; no vendored .sty files live in this repo.
+#
+# Fields:
+#   display_name   — human-readable venue name
+#   official_url   — URL to the official style package (zip)
+#   style_package  — LaTeX package name to \usepackage{...}
+#   bib_style      — BibTeX style (e.g. plainnat, IEEEtran)
+#   citation_style — natbib (\citep/\citet) or cite (\cite)
+#   page_limit     — main body page limit (to end of Conclusion)
+#   refs_in_limit  — whether references count toward page limit
+#   fallback_templates — path to pre-downloaded templates (relative to repo root)
+
+neurips_2025:
+  display_name: "NeurIPS 2025"
+  official_url: "https://media.neurips.cc/Conferences/NeurIPS2025/Styles.zip"
+  style_package: "neurips_2025"
+  bib_style: "plainnat"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+neurips_2026:
+  display_name: "NeurIPS 2026"
+  official_url: "https://media.neurips.cc/Conferences/NeurIPS2026/Styles.zip"
+  style_package: "neurips_2026"
+  bib_style: "plainnat"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+iclr_2026:
+  display_name: "ICLR 2026"
+  official_url: "https://github.com/ICLR/Master-Template/raw/master/iclr2026.zip"
+  style_package: "iclr2026_conference"
+  bib_style: "iclr2026_conference"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+icml_2026:
+  display_name: "ICML 2026"
+  official_url: "https://icml.cc/Conferences/2026/Styles.zip"
+  style_package: "icml2026"
+  bib_style: "icml2026"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+cvpr_2026:
+  display_name: "CVPR 2026"
+  official_url: "https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines"
+  style_package: "cvpr"
+  bib_style: "ieee_fullname"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+acl_2026:
+  display_name: "ACL 2026"
+  official_url: "https://github.com/acl-org/acl-style-files"
+  style_package: "acl"
+  bib_style: "acl_natbib"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+aaai_2026:
+  display_name: "AAAI 2026"
+  official_url: "https://aaai.org/conference/aaai/aaai-26/aaai-26-submission-instructions/"
+  style_package: "aaai2026"
+  bib_style: "aaai2026"
+  citation_style: "natbib"
+  page_limit: 7
+  refs_in_limit: true
+
+ieee_journal:
+  display_name: "IEEE Transactions / Letters"
+  official_url: "https://www.ieee.org/conferences/publishing/templates.html"
+  style_package: "IEEEtran"
+  bib_style: "IEEEtran"
+  citation_style: "cite"
+  page_limit: 14
+  refs_in_limit: true
+
+ieee_conference:
+  display_name: "IEEE Conference (ICC, GLOBECOM, etc.)"
+  official_url: "https://www.ieee.org/conferences/publishing/templates.html"
+  style_package: "IEEEtran"
+  bib_style: "IEEEtran"
+  citation_style: "cite"
+  page_limit: 6
+  refs_in_limit: true
