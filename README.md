@@ -35,6 +35,71 @@ Core guarantees:
 - Approved stage summaries are appended to `memory.md`.
 - `main.py` defaults to `--model sonnet`, but the model can be overridden per run.
 
+## 🌟 Example Run
+
+AutoR has already been used end-to-end on a real run: `runs/20260330_101222`.
+
+That run produced:
+
+- a compiled paper PDF: [example_paper.pdf](assets/examples/example_paper.pdf)
+- publication-style figures: accuracy comparison, ablation analysis, and a two-layer narrative figure
+- executable code, structured datasets, machine-readable results, review notes, and dissemination artifacts
+
+Highlighted outcomes from that run:
+
+- AGSNv2 achieved the best result on Actor: `36.21 ± 1.08`
+- the system produced a full NeurIPS-style paper package
+- the final run included real figures, structured result files, and human-steered refinement across multiple stages
+
+### 🧪 Example Figures
+
+**Accuracy comparison across models and datasets**
+
+<img src="assets/examples/example_fig1_accuracy.png" alt="Example accuracy comparison" width="820" />
+
+**Ablation and Actor result summary**
+
+<img src="assets/examples/example_fig4_ablation_actor.png" alt="Example ablation and actor figure" width="820" />
+
+**Two-layer narrative figure from the final paper**
+
+<img src="assets/examples/example_fig6_two_layer.png" alt="Example two-layer narrative figure" width="820" />
+
+### 📄 Paper Preview
+
+The same run also produced a full 9-page conference-style paper in NeurIPS format. These snapshots are taken directly from the final `main.pdf`.
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <strong>Page 1</strong><br />
+      Title, abstract, and framing<br />
+      <img src="assets/examples/example_paper_page1.png" alt="Example paper page 1" width="240" />
+    </td>
+    <td align="center" valign="top">
+      <strong>Page 5</strong><br />
+      Method and training algorithm<br />
+      <img src="assets/examples/example_paper_page5.png" alt="Example paper page 5" width="240" />
+    </td>
+    <td align="center" valign="top">
+      <strong>Page 7</strong><br />
+      Main tables and per-seed results<br />
+      <img src="assets/examples/example_paper_page7.png" alt="Example paper page 7" width="240" />
+    </td>
+  </tr>
+</table>
+
+### 🧑‍🔬 Human-in-the-Loop Example
+
+This run also shows why the workflow is human-centered rather than fully automatic. The user did not just approve stages; they redirected the research when needed:
+
+- **Stage 02**: narrowed the project to a single core claim, forcing the hypothesis space to become much sharper
+- **Stage 04**: required downloading the full dataset and running real pre-checks instead of stopping at code-only implementation
+- **Stage 05**: repeatedly pushed the system to rerun experiments in a cleaner environment until real benchmark results were obtained
+- **Stage 06**: redirected the analysis from a leaderboard-only story toward a mechanism-driven two-layer narrative
+
+The result is not just “automation.” It is a workflow where human judgment intervenes at high-leverage moments while Claude Code handles the heavy execution path.
+
 ## 🚀 Quick Start
 
 Start a new run:
