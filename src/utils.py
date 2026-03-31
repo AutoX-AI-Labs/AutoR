@@ -7,6 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+TEMPLATE_REGISTRY_PATH = REPO_ROOT / "templates" / "registry.yaml"
+DEFAULT_VENUE = "neurips_2025"
+
 
 @dataclass(frozen=True)
 class StageSpec:
@@ -28,6 +32,7 @@ class RunPaths:
     run_root: Path
     user_input: Path
     memory: Path
+    run_config: Path
     logs: Path
     logs_raw: Path
     prompt_cache_dir: Path
@@ -114,6 +119,7 @@ RESULT_SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".parquet", ".npz", ".npy"
 FIGURE_SUFFIXES = {".png", ".pdf", ".svg", ".jpg", ".jpeg"}
 LATEX_SUFFIXES = {".tex"}
 PDF_SUFFIXES = {".pdf"}
+BIB_SUFFIXES = {".bib"}
 
 
 def create_run_root(runs_dir: Path) -> Path:
@@ -135,6 +141,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         run_root=run_root,
         user_input=run_root / "user_input.txt",
         memory=run_root / "memory.md",
+        run_config=run_root / "run_config.json",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
         prompt_cache_dir=run_root / "prompt_cache",
@@ -218,6 +225,94 @@ def initialize_memory(paths: RunPaths, user_goal: str) -> None:
     write_text(paths.memory, memory)
 
 
+def initialize_run_config(paths: RunPaths, model: str, venue: str | None = None) -> dict[str, Any]:
+    selected_venue = resolve_venue_key(venue)
+    config = {
+        "model": model,
+        "venue": selected_venue,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    write_text(paths.run_config, json.dumps(config, indent=2, ensure_ascii=False))
+    return config
+
+
+def load_run_config(paths: RunPaths) -> dict[str, Any]:
+    if not paths.run_config.exists():
+        return {"model": "unknown", "venue": DEFAULT_VENUE}
+
+    try:
+        payload = json.loads(read_text(paths.run_config))
+    except json.JSONDecodeError:
+        return {"model": "unknown", "venue": DEFAULT_VENUE}
+
+    if not isinstance(payload, dict):
+        return {"model": "unknown", "venue": DEFAULT_VENUE}
+
+    model = payload.get("model")
+    venue = payload.get("venue")
+    return {
+        "model": model if isinstance(model, str) and model.strip() else "unknown",
+        "venue": resolve_venue_key(venue if isinstance(venue, str) else None),
+    }
+
+
+def save_run_config(paths: RunPaths, config: dict[str, Any]) -> None:
+    normalized = {
+        "model": str(config.get("model") or "unknown"),
+        "venue": resolve_venue_key(str(config.get("venue") or DEFAULT_VENUE)),
+    }
+    created_at = config.get("created_at")
+    if isinstance(created_at, str) and created_at.strip():
+        normalized["created_at"] = created_at
+    else:
+        normalized["created_at"] = datetime.now().isoformat(timespec="seconds")
+    write_text(paths.run_config, json.dumps(normalized, indent=2, ensure_ascii=False))
+
+
+def ensure_run_config(paths: RunPaths, model: str | None = None, venue: str | None = None) -> dict[str, Any]:
+    current = load_run_config(paths)
+    updated = {
+        "model": model or current.get("model") or "unknown",
+        "venue": resolve_venue_key(venue or current.get("venue")),
+        "created_at": current.get("created_at") or datetime.now().isoformat(timespec="seconds"),
+    }
+    save_run_config(paths, updated)
+    return updated
+
+
+def selected_venue_key(paths: RunPaths) -> str:
+    config = load_run_config(paths)
+    return resolve_venue_key(config.get("venue") if isinstance(config.get("venue"), str) else None)
+
+
+def selected_venue_profile(paths: RunPaths) -> dict[str, str]:
+    registry = _load_template_registry()
+    venue_key = selected_venue_key(paths)
+    metadata = registry.get(venue_key, {})
+    profile = dict(metadata)
+    profile["venue_key"] = venue_key
+    profile.setdefault("display_name", venue_key)
+    profile.setdefault("venue_type", "conference")
+    return profile
+
+
+def format_venue_for_prompt(paths: RunPaths) -> str:
+    profile = selected_venue_profile(paths)
+    lines = [
+        f"- target venue key: `{profile['venue_key']}`",
+        f"- display name: {profile.get('display_name', profile['venue_key'])}",
+        f"- venue type: {profile.get('venue_type', 'conference')}",
+    ]
+    if profile.get("page_limit"):
+        lines.append(f"- nominal page limit: {profile['page_limit']}")
+    if profile.get("citation_style"):
+        lines.append(f"- citation style: {profile['citation_style']}")
+    if profile.get("style_package"):
+        lines.append(f"- preferred style package: `{profile['style_package']}`")
+    lines.append(f"- run config: `{paths.run_config.resolve()}`")
+    return "\n".join(lines)
+
+
 def load_prompt_template(prompt_dir: Path, stage: StageSpec) -> str:
     template_path = prompt_dir / stage.filename
     if not template_path.exists():
@@ -233,6 +328,7 @@ def format_stage_template(template: str, stage: StageSpec, paths: RunPaths) -> s
         "{{RUN_ROOT}}": str(paths.run_root.resolve()),
         "{{USER_INPUT_PATH}}": str(paths.user_input.resolve()),
         "{{MEMORY_PATH}}": str(paths.memory.resolve()),
+        "{{RUN_CONFIG_PATH}}": str(paths.run_config.resolve()),
         "{{LOGS_PATH}}": str(paths.logs.resolve()),
         "{{LOGS_RAW_PATH}}": str(paths.logs_raw.resolve()),
         "{{STAGE_OUTPUT_PATH}}": str(paths.stage_tmp_file(stage).resolve()),
@@ -247,6 +343,7 @@ def format_stage_template(template: str, stage: StageSpec, paths: RunPaths) -> s
         "{{WORKSPACE_ARTIFACTS_DIR}}": str(paths.artifacts_dir.resolve()),
         "{{WORKSPACE_NOTES_DIR}}": str(paths.notes_dir.resolve()),
         "{{WORKSPACE_REVIEWS_DIR}}": str(paths.reviews_dir.resolve()),
+        "{{SELECTED_VENUE}}": selected_venue_key(paths),
     }
 
     formatted = template
@@ -484,14 +581,28 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             )
 
     if stage.number >= 7:
-        tex_files = [path for path in _existing_files(paths.writing_dir) if path.suffix.lower() in LATEX_SUFFIXES]
-        if not tex_files:
+        main_tex = paths.writing_dir / "main.tex"
+        if not main_tex.exists():
             problems.append(
-                f"{stage.stage_title} requires LaTeX sources under workspace/writing."
+                f"{stage.stage_title} requires main.tex under workspace/writing."
             )
-        elif not any(_looks_like_neurips_tex(path) for path in tex_files):
+        elif not _looks_like_supported_manuscript(main_tex, selected_venue_key(paths)):
             problems.append(
-                f"{stage.stage_title} requires a NeurIPS-style LaTeX manuscript in workspace/writing."
+                f"{stage.stage_title} requires a supported conference or journal manuscript in workspace/writing/main.tex. "
+                f"Expected venue: {selected_venue_key(paths)}. Use a matching style package or add a comment such as '% AutoR venue: {selected_venue_key(paths)}' near the top of main.tex."
+            )
+
+        bib_files = [path for path in _existing_files(paths.writing_dir) if path.suffix.lower() in BIB_SUFFIXES]
+        if not bib_files and not _has_inline_bibliography(paths.writing_dir):
+            problems.append(
+                f"{stage.stage_title} requires a .bib file or an inline bibliography in the writing package."
+            )
+
+        sections_dir = paths.writing_dir / "sections"
+        section_tex_files = list(sections_dir.glob("*.tex")) if sections_dir.exists() else []
+        if not section_tex_files:
+            problems.append(
+                f"{stage.stage_title} requires section .tex files under workspace/writing/sections."
             )
 
         pdf_count = _count_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES)
@@ -499,6 +610,21 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
         if pdf_count == 0:
             problems.append(
                 f"{stage.stage_title} requires a compiled PDF manuscript under workspace/writing or workspace/artifacts."
+            )
+
+        if not (paths.artifacts_dir / "build_log.txt").exists():
+            problems.append(
+                f"{stage.stage_title} requires build_log.txt under workspace/artifacts."
+            )
+
+        if not (paths.artifacts_dir / "citation_verification.json").exists():
+            problems.append(
+                f"{stage.stage_title} requires citation_verification.json under workspace/artifacts."
+            )
+
+        if not (paths.artifacts_dir / "self_review.json").exists():
+            problems.append(
+                f"{stage.stage_title} requires self_review.json under workspace/artifacts."
             )
 
     if stage.number >= 8:
@@ -613,11 +739,142 @@ def _count_non_markdown_files(directory: Path) -> int:
     return sum(1 for path in _existing_files(directory) if path.suffix.lower() not in {".md", ".txt"})
 
 
-def _looks_like_neurips_tex(path: Path) -> bool:
-    if not path.exists() or path.suffix.lower() != ".tex":
-        return False
-    text = read_text(path).lower()
-    return "neurips" in text and "\\documentclass" in text
+def _load_template_registry() -> dict[str, dict[str, str]]:
+    if not TEMPLATE_REGISTRY_PATH.exists():
+        return {}
+
+    registry: dict[str, dict[str, str]] = {}
+    current_venue: str | None = None
+
+    for raw_line in TEMPLATE_REGISTRY_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        if not line.startswith(" ") and stripped.endswith(":"):
+            current_venue = stripped[:-1]
+            registry[current_venue] = {}
+            continue
+
+        if current_venue and line.startswith("  ") and ":" in stripped:
+            key, value = stripped.split(":", 1)
+            registry[current_venue][key.strip()] = value.strip().strip('"').strip("'")
+
+    return registry
+
+
+def _normalize_marker(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _supported_manuscript_markers() -> set[str]:
+    markers: set[str] = set()
+    registry = _load_template_registry()
+
+    for venue_id, metadata in registry.items():
+        markers.add(_normalize_marker(venue_id))
+        display_name = metadata.get("display_name", "")
+        style_package = metadata.get("style_package", "")
+
+        if display_name:
+            markers.add(_normalize_marker(display_name))
+        if style_package:
+            markers.add(_normalize_marker(style_package))
+
+    return {marker for marker in markers if marker}
+
+
+def _extract_explicit_venue_marker(tex_text: str) -> str | None:
+    match = re.search(r"autor\s+venue\s*:\s*([a-zA-Z0-9_.-]+)", tex_text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
+def resolve_venue_key(value: str | None) -> str:
+    registry = _load_template_registry()
+    if not value:
+        return DEFAULT_VENUE
+
+    candidate = value.strip()
+    if not candidate:
+        return DEFAULT_VENUE
+
+    if candidate in registry:
+        return candidate
+
+    normalized = _normalize_marker(candidate)
+    for venue_id, metadata in registry.items():
+        aliases = {
+            _normalize_marker(venue_id),
+            _normalize_marker(metadata.get("display_name", "")),
+            _normalize_marker(metadata.get("style_package", "")),
+        }
+        if normalized in aliases:
+            return venue_id
+
+    raise ValueError(f"Unknown venue: {value}")
+
+
+def _markers_for_venue(venue_key: str) -> set[str]:
+    registry = _load_template_registry()
+    metadata = registry.get(venue_key, {})
+    markers = {
+        _normalize_marker(venue_key),
+        _normalize_marker(metadata.get("display_name", "")),
+        _normalize_marker(metadata.get("style_package", "")),
+    }
+    return {marker for marker in markers if marker}
+
+
+def _looks_like_supported_manuscript(main_tex: Path, expected_venue: str | None = None) -> bool:
+    text = read_text(main_tex)
+    explicit_venue = _extract_explicit_venue_marker(text)
+    if explicit_venue:
+        try:
+            explicit_venue = resolve_venue_key(explicit_venue)
+        except ValueError:
+            explicit_venue = None
+
+    if expected_venue:
+        try:
+            expected_venue = resolve_venue_key(expected_venue)
+        except ValueError:
+            expected_venue = DEFAULT_VENUE
+    else:
+        expected_venue = DEFAULT_VENUE
+
+    if explicit_venue and explicit_venue == expected_venue:
+        return True
+
+    normalized_text = _normalize_marker(text)
+    for marker in _markers_for_venue(expected_venue):
+        if marker and marker in normalized_text:
+            return True
+
+    if explicit_venue:
+        return explicit_venue == expected_venue
+
+    return False
+
+
+def _has_inline_bibliography(writing_dir: Path) -> bool:
+    bibliography_patterns = (
+        r"\\begin\{thebibliography\}",
+        r"\\bibliography\{",
+        r"\\printbibliography\b",
+    )
+
+    for path in _existing_files(writing_dir):
+        if path.suffix.lower() != ".tex":
+            continue
+        text = read_text(path)
+        if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in bibliography_patterns):
+            return True
+
+    return False
 
 
 def canonicalize_stage_markdown(

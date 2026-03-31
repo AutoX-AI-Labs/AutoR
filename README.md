@@ -35,6 +35,13 @@ Core guarantees:
 - Approved stage summaries are appended to `memory.md`.
 - `main.py` defaults to `--model sonnet`, but the model can be overridden per run.
 
+Stage 07 is now strengthened with:
+
+- a venue registry for conference and journal-style targets, with NeurIPS as the default and journal-style profiles available when requested
+- a writing manifest generated from existing figures, results, data files, and approved stage summaries
+- stronger writing-stage artifact checks for venue-aware `main.tex`, bibliography assets, section files, `paper.pdf`, `build_log.txt`, `citation_verification.json`, and `self_review.json`
+- a more explicit paper-production prompt covering venue selection, drafting, polish, self-review, compilation, and packaging
+
 ## 🌟 Example Run
 
 AutoR has already been used end-to-end on a real run: `runs/20260330_101222`.
@@ -131,6 +138,14 @@ Run with a different Claude model alias:
 ```bash
 python main.py --model opus
 ```
+
+Run with an explicit writing venue profile:
+
+```bash
+python main.py --venue nature
+```
+
+If `--venue` is omitted, AutoR defaults to `neurips_2025`.
 
 Resume the latest run:
 
@@ -358,7 +373,7 @@ Artifact requirements by stage:
 - Stage 03+: machine-readable data under `workspace/data/`
 - Stage 05+: machine-readable results under `workspace/results/`
 - Stage 06+: figure files under `workspace/figures/`
-- Stage 07+: NeurIPS-style LaTeX sources plus a compiled PDF under `workspace/writing/` or `workspace/artifacts/`
+- Stage 07+: venue-aware conference or journal-style LaTeX sources plus a compiled PDF under `workspace/writing/` or `workspace/artifacts/`
 - Stage 08+: review and readiness artifacts under `workspace/reviews/`
 
 A run with only markdown notes does not pass validation.
@@ -402,7 +417,7 @@ Open work is tracked here so contributors can pick up clear, decoupled improveme
 - Machine-readable run manifest. Add a single source of truth such as `run_manifest.json` to track stage status, approval state, stale dependencies, session IDs, and key artifact pointers. This should make both automation and future UI work much cleaner.
 - Continuation handoff compression. Add a short machine-generated stage handoff file that summarizes what is already correct, what is missing, and which files matter most. This should reduce context growth and make continuation more stable over long runs.
 - Result schema and artifact indexing. Standardize `workspace/data/`, `workspace/results/`, and `workspace/figures/` around explicit schemas and generate an artifact index automatically. Later stages and the UI should consume structured metadata instead of scanning ad hoc files.
-- Writing pipeline hardening. Turn Stage 07 into a reliable manuscript production pipeline with stable NeurIPS LaTeX structure, bibliography handling, table and figure inclusion, and reproducible PDF compilation. The goal is a submission-ready paper package, not just writing notes.
+- Writing pipeline hardening. Turn Stage 07 into a reliable manuscript production pipeline with stable conference and journal-style paper structures, bibliography handling, table and figure inclusion, and reproducible PDF compilation. The goal is a submission-ready paper package, not just writing notes.
 - Review and dissemination package. Expand Stage 08 so it produces readiness checklists, threats-to-validity notes, artifact manifests, release notes, and external-facing research bundles. The final stage should feel like packaging a paper for real release, not just wrapping up text.
 - Frontend run dashboard. Build a lightweight UI that can browse runs, stage status, summaries, logs, artifacts, and validation failures. It should read from the run directory and manifest rather than introducing a database first.
 - README and open-source assets. Keep refining the README and add `assets/` images such as workflow diagrams, UI screenshots, and artifact examples. This is important for open-source clarity, onboarding, and project presentation.

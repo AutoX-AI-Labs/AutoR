@@ -6,7 +6,14 @@ from pathlib import Path
 
 from src.manager import ResearchManager
 from src.operator import ClaudeOperator
-from src.utils import STAGES, StageSpec
+from src.utils import (
+    DEFAULT_VENUE,
+    STAGES,
+    StageSpec,
+    build_run_paths,
+    load_run_config,
+    resolve_venue_key,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,8 +34,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="sonnet",
-        help="Claude model alias or full model name for real runs. Defaults to 'sonnet'.",
+        help=(
+            "Claude model alias or full model name for real runs. "
+            "Defaults to 'sonnet' for new runs and preserves the existing run model when resuming."
+        ),
+    )
+    parser.add_argument(
+        "--venue",
+        help=(
+            "Target venue profile for Stage 07 writing. "
+            f"Defaults to '{DEFAULT_VENUE}' for new runs and preserves the existing run venue when resuming. "
+            "Examples: neurips_2025, nature, nature_communications, jmlr."
+        ),
     )
     parser.add_argument(
         "--resume-run",
@@ -98,21 +115,33 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parent
     runs_dir = repo_root / args.runs_dir
 
-    operator = ClaudeOperator(model=args.model, fake_mode=args.fake_operator)
+    if args.resume_run:
+        start_stage = resolve_stage(args.redo_stage)
+        run_root = resolve_resume_run(runs_dir, args.resume_run)
+        paths = build_run_paths(run_root)
+        existing_config = load_run_config(paths)
+        existing_model = existing_config.get("model")
+        model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
+        venue = resolve_venue_key(args.venue or existing_config["venue"])
+        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator)
+        manager = ResearchManager(
+            project_root=repo_root,
+            runs_dir=runs_dir,
+            operator=operator,
+        )
+        manager.resume_run(run_root, start_stage=start_stage, venue=venue)
+        return 0
+
+    model = args.model or "sonnet"
+    venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
+    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
         operator=operator,
     )
-
-    if args.resume_run:
-        start_stage = resolve_stage(args.redo_stage)
-        run_root = resolve_resume_run(runs_dir, args.resume_run)
-        manager.resume_run(run_root, start_stage=start_stage)
-        return 0
-
     goal = args.goal.strip() if args.goal else read_user_goal()
-    manager.run(goal)
+    manager.run(goal, venue=venue)
     return 0
 
 

@@ -1,0 +1,122 @@
+# Template registry for Stage 07 writing.
+# Stores venue metadata only. AutoR does not vendor official style packages.
+
+neurips_2025:
+  display_name: "NeurIPS 2025"
+  venue_type: "conference"
+  official_url: "https://media.neurips.cc/Conferences/NeurIPS2025/Styles.zip"
+  style_package: "neurips_2025"
+  bib_style: "plainnat"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+neurips_2026:
+  display_name: "NeurIPS 2026"
+  venue_type: "conference"
+  official_url: "https://media.neurips.cc/Conferences/NeurIPS2026/Styles.zip"
+  style_package: "neurips_2026"
+  bib_style: "plainnat"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+iclr_2026:
+  display_name: "ICLR 2026"
+  venue_type: "conference"
+  official_url: "https://github.com/ICLR/Master-Template/raw/master/iclr2026.zip"
+  style_package: "iclr2026_conference"
+  bib_style: "iclr2026_conference"
+  citation_style: "natbib"
+  page_limit: 9
+  refs_in_limit: false
+
+icml_2026:
+  display_name: "ICML 2026"
+  venue_type: "conference"
+  official_url: "https://icml.cc/Conferences/2026/Styles.zip"
+  style_package: "icml2026"
+  bib_style: "icml2026"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+cvpr_2026:
+  display_name: "CVPR 2026"
+  venue_type: "conference"
+  official_url: "https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines"
+  style_package: "cvpr"
+  bib_style: "ieee_fullname"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+acl_2026:
+  display_name: "ACL 2026"
+  venue_type: "conference"
+  official_url: "https://github.com/acl-org/acl-style-files"
+  style_package: "acl"
+  bib_style: "acl_natbib"
+  citation_style: "natbib"
+  page_limit: 8
+  refs_in_limit: false
+
+aaai_2026:
+  display_name: "AAAI 2026"
+  venue_type: "conference"
+  official_url: "https://aaai.org/conference/aaai/aaai-26/aaai-26-submission-instructions/"
+  style_package: "aaai2026"
+  bib_style: "aaai2026"
+  citation_style: "natbib"
+  page_limit: 7
+  refs_in_limit: true
+
+ieee_journal:
+  display_name: "IEEE Transactions / Letters"
+  venue_type: "journal"
+  official_url: "https://www.ieee.org/conferences/publishing/templates.html"
+  style_package: "IEEEtran"
+  bib_style: "IEEEtran"
+  citation_style: "cite"
+  page_limit: 14
+  refs_in_limit: true
+
+ieee_conference:
+  display_name: "IEEE Conference"
+  venue_type: "conference"
+  official_url: "https://www.ieee.org/conferences/publishing/templates.html"
+  style_package: "IEEEtran"
+  bib_style: "IEEEtran"
+  citation_style: "cite"
+  page_limit: 6
+  refs_in_limit: true
+
+nature:
+  display_name: "Nature"
+  venue_type: "journal"
+  official_url: "https://www.nature.com/nature/for-authors/formatting-guide"
+  style_package: ""
+  bib_style: "inline_or_manual"
+  citation_style: "numeric"
+  page_limit: 8
+  refs_in_limit: true
+
+nature_communications:
+  display_name: "Nature Communications"
+  venue_type: "journal"
+  official_url: "https://www.nature.com/ncomms/submit/how-to-submit"
+  style_package: ""
+  bib_style: "inline_or_manual"
+  citation_style: "numeric"
+  page_limit: "flexible"
+  refs_in_limit: true
+
+jmlr:
+  display_name: "Journal of Machine Learning Research"
+  venue_type: "journal"
+  official_url: "https://jmlr.org/format/format.html"
+  style_package: "jmlr2e"
+  bib_style: "plain"
+  citation_style: "numeric"
+  page_limit: "flexible"
+  refs_in_limit: true

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .operator import ClaudeOperator
+from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
 from .utils import (
     STAGES,
     RunPaths,
@@ -17,9 +18,12 @@ from .utils import (
     build_run_paths,
     canonicalize_stage_markdown,
     create_run_root,
+    ensure_run_config,
     ensure_run_layout,
     format_stage_template,
+    format_venue_for_prompt,
     initialize_memory,
+    initialize_run_config,
     load_prompt_template,
     parse_refinement_suggestions,
     read_text,
@@ -44,14 +48,20 @@ class ResearchManager:
         self.prompt_dir = self.project_root / "src" / "prompts"
         self.output_stream = output_stream
 
-    def run(self, user_goal: str) -> bool:
-        paths = self._create_run(user_goal)
+    def run(self, user_goal: str, venue: str | None = None) -> bool:
+        paths = self._create_run(user_goal, venue=venue)
         self._print(f"Run created at: {paths.run_root}")
         return self._run_from_paths(paths)
 
-    def resume_run(self, run_root: Path, start_stage: StageSpec | None = None) -> bool:
+    def resume_run(
+        self,
+        run_root: Path,
+        start_stage: StageSpec | None = None,
+        venue: str | None = None,
+    ) -> bool:
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
+        config = ensure_run_config(paths, model=self.operator.model, venue=venue)
         if not paths.user_input.exists():
             raise FileNotFoundError(f"Missing user_input.txt in run: {run_root}")
         if not paths.memory.exists():
@@ -61,11 +71,13 @@ class ResearchManager:
             paths.logs,
             "run_resume",
             f"Resumed run at: {paths.run_root}"
-            + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else ""),
+            + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else "")
+            + f"\nVenue: {config['venue']}",
         )
         self._print(f"Resuming run at: {paths.run_root}")
         if start_stage:
             self._print(f"Restarting from: {start_stage.stage_title}")
+        self._print(f"Venue profile: {config['venue']}")
         return self._run_from_paths(paths, start_stage=start_stage)
 
     def _run_from_paths(self, paths: RunPaths, start_stage: StageSpec | None = None) -> bool:
@@ -86,13 +98,19 @@ class ResearchManager:
         self._print("All stages approved. Run complete.")
         return True
 
-    def _create_run(self, user_goal: str) -> RunPaths:
+    def _create_run(self, user_goal: str, venue: str | None = None) -> RunPaths:
         run_root = create_run_root(self.runs_dir)
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
         write_text(paths.user_input, user_goal)
         initialize_memory(paths, user_goal)
+        config = initialize_run_config(paths, model=self.operator.model, venue=venue)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
+        append_log_entry(
+            paths.logs,
+            "run_config",
+            f"Model: {config['model']}\nVenue: {config['venue']}",
+        )
         return paths
 
     def _select_stages_for_run(
@@ -363,6 +381,20 @@ class ResearchManager:
     ) -> str:
         template = load_prompt_template(self.prompt_dir, stage)
         stage_template = format_stage_template(template, stage, paths)
+        stage_template = (
+            stage_template.rstrip()
+            + "\n\n## Run Configuration\n\n"
+            + format_venue_for_prompt(paths)
+            + "\n"
+        )
+        if stage.slug == "07_writing":
+            manifest = build_writing_manifest(paths)
+            stage_template = (
+                stage_template.rstrip()
+                + "\n\n## Writing Manifest\n\n"
+                + format_manifest_for_prompt(manifest)
+                + "\n"
+            )
         if continue_session:
             return build_continuation_prompt(stage, stage_template, paths, revision_feedback)
 
