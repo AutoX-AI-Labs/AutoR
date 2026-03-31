@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -65,6 +66,19 @@ class ClaudeOperator:
         write_text(prompt_path, prompt)
         session_id = self._resolve_stage_session_id(paths, stage, continue_session)
         command = self._build_cli_command(prompt_path, session_id, resume=continue_session)
+        self._write_attempt_state(
+            paths,
+            stage,
+            attempt_no,
+            {
+                "status": "starting",
+                "mode": "resume" if continue_session else "start",
+                "session_id": session_id,
+                "prompt_path": str(prompt_path),
+                "command": command,
+                "started_at": self._now(),
+            },
+        )
 
         append_jsonl(
             paths.logs_raw,
@@ -80,7 +94,7 @@ class ClaudeOperator:
             },
         )
 
-        exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+        exit_code, stdout_text, stderr_text, observed_session_id, stream_meta = self._run_streaming_command(
             command=command,
             cwd=paths.run_root,
             stage=stage,
@@ -112,7 +126,8 @@ class ClaudeOperator:
                     }
                 },
             )
-            exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+            self._mark_session_broken(paths, stage, session_id, reason="resume_failure")
+            exit_code, stdout_text, stderr_text, observed_session_id, stream_meta = self._run_streaming_command(
                 command=fallback_command,
                 cwd=paths.run_root,
                 stage=stage,
@@ -125,6 +140,34 @@ class ClaudeOperator:
         effective_session_id = observed_session_id or session_id
         self._persist_stage_session_id(paths, stage, effective_session_id)
         success = exit_code == 0 and stage_file.exists()
+        self._update_session_state(
+            paths,
+            stage,
+            effective_session_id,
+            {
+                "broken": not success and continue_session,
+                "last_exit_code": exit_code,
+                "last_mode": "resume" if continue_session else "start",
+                "updated_at": self._now(),
+            },
+        )
+        self._write_attempt_state(
+            paths,
+            stage,
+            attempt_no,
+            {
+                "status": "completed" if success else "failed",
+                "mode": "resume" if continue_session else "start",
+                "session_id": effective_session_id,
+                "prompt_path": str(prompt_path),
+                "command": command,
+                "exit_code": exit_code,
+                "stdout_excerpt": stdout_text[-2000:] if stdout_text else "",
+                "stderr_excerpt": stderr_text[-1000:] if stderr_text else "",
+                "stream_meta": stream_meta,
+                "finished_at": self._now(),
+            },
+        )
 
         return OperatorResult(
             success=success,
@@ -242,7 +285,21 @@ Original stderr:
             },
         )
 
-        exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+        self._write_attempt_state(
+            paths,
+            stage,
+            attempt_no,
+            {
+                "status": "repair_starting",
+                "mode": "repair",
+                "session_id": session_id,
+                "prompt_path": str(recovery_prompt_path),
+                "command": command,
+                "started_at": self._now(),
+            },
+        )
+
+        exit_code, stdout_text, stderr_text, observed_session_id, stream_meta = self._run_streaming_command(
             command=command,
             cwd=paths.run_root,
             stage=stage,
@@ -277,7 +334,8 @@ Original stderr:
                     }
                 },
             )
-            exit_code, stdout_text, stderr_text, observed_session_id = self._run_streaming_command(
+            self._mark_session_broken(paths, stage, session_id, reason="repair_resume_failure")
+            exit_code, stdout_text, stderr_text, observed_session_id, stream_meta = self._run_streaming_command(
                 command=fallback_command,
                 cwd=paths.run_root,
                 stage=stage,
@@ -289,6 +347,34 @@ Original stderr:
 
         effective_session_id = observed_session_id or session_id
         self._persist_stage_session_id(paths, stage, effective_session_id)
+        self._update_session_state(
+            paths,
+            stage,
+            effective_session_id,
+            {
+                "broken": exit_code != 0 and not stage_file.exists(),
+                "last_exit_code": exit_code,
+                "last_mode": "repair",
+                "updated_at": self._now(),
+            },
+        )
+        self._write_attempt_state(
+            paths,
+            stage,
+            attempt_no,
+            {
+                "status": "repair_completed" if exit_code == 0 and stage_file.exists() else "repair_failed",
+                "mode": "repair",
+                "session_id": effective_session_id,
+                "prompt_path": str(recovery_prompt_path),
+                "command": command,
+                "exit_code": exit_code,
+                "stdout_excerpt": stdout_text[-2000:] if stdout_text else "",
+                "stderr_excerpt": stderr_text[-1000:] if stderr_text else "",
+                "stream_meta": stream_meta,
+                "finished_at": self._now(),
+            },
+        )
 
         return OperatorResult(
             success=exit_code == 0 and stage_file.exists(),
@@ -307,7 +393,7 @@ Original stderr:
         attempt_no: int,
         paths: RunPaths,
         mode: str,
-    ) -> tuple[int, str, str, str | None]:
+    ) -> tuple[int, str, str, str | None, dict[str, object]]:
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
@@ -325,6 +411,7 @@ Original stderr:
         non_json_lines: list[str] = []
         ended_with_newline = True
         observed_session_id: str | None = None
+        malformed_json_count = 0
 
         try:
             for raw_line in process.stdout:
@@ -341,6 +428,7 @@ Original stderr:
                 try:
                     payload = json.loads(stripped)
                 except json.JSONDecodeError:
+                    malformed_json_count += 1
                     append_jsonl(
                         paths.logs_raw,
                         {
@@ -380,7 +468,12 @@ Original stderr:
             non_json_lines=non_json_lines,
             raw_lines=raw_lines,
         )
-        return exit_code, stdout_text, "", observed_session_id
+        return exit_code, stdout_text, "", observed_session_id, {
+            "raw_line_count": len(raw_lines),
+            "non_json_line_count": len(non_json_lines),
+            "malformed_json_count": malformed_json_count,
+            "observed_session_id": observed_session_id,
+        }
 
     def _compose_stdout_text(
         self,
@@ -562,6 +655,14 @@ Original stderr:
         continue_session: bool,
         allow_create: bool = True,
     ) -> str | None:
+        session_state_path = paths.stage_session_state_file(stage)
+        if session_state_path.exists():
+            payload = json.loads(read_text(session_state_path))
+            session_id = str(payload.get("session_id") or "").strip()
+            broken = bool(payload.get("broken", False))
+            if session_id and not broken:
+                return session_id
+
         session_file = paths.stage_session_file(stage)
         if session_file.exists():
             session_id = read_text(session_file).strip()
@@ -577,6 +678,15 @@ Original stderr:
         if not session_id:
             return
         write_text(paths.stage_session_file(stage), session_id)
+        self._update_session_state(
+            paths,
+            stage,
+            session_id,
+            {
+                "broken": False,
+                "updated_at": self._now(),
+            },
+        )
 
     def _extract_session_id(self, payload: dict[str, object]) -> str | None:
         value = payload.get("session_id")
@@ -620,3 +730,46 @@ Original stderr:
     def _looks_like_resume_failure(self, stdout_text: str, stderr_text: str) -> bool:
         combined = "\n".join(part for part in [stdout_text, stderr_text] if part).lower()
         return "no conversation found with session id" in combined or "resume" in combined and "not found" in combined
+
+    def _write_attempt_state(
+        self,
+        paths: RunPaths,
+        stage: StageSpec,
+        attempt_no: int,
+        payload: dict[str, object],
+    ) -> None:
+        write_text(paths.stage_attempt_state_file(stage, attempt_no), json.dumps(payload, indent=2, ensure_ascii=True))
+
+    def _update_session_state(
+        self,
+        paths: RunPaths,
+        stage: StageSpec,
+        session_id: str | None,
+        changes: dict[str, object],
+    ) -> None:
+        path = paths.stage_session_state_file(stage)
+        payload: dict[str, object] = {}
+        if path.exists():
+            try:
+                payload = json.loads(read_text(path))
+            except json.JSONDecodeError:
+                payload = {}
+        payload.update(changes)
+        if session_id:
+            payload["session_id"] = session_id
+        write_text(path, json.dumps(payload, indent=2, ensure_ascii=True))
+
+    def _mark_session_broken(self, paths: RunPaths, stage: StageSpec, session_id: str | None, reason: str) -> None:
+        self._update_session_state(
+            paths,
+            stage,
+            session_id,
+            {
+                "broken": True,
+                "broken_reason": reason,
+                "updated_at": self._now(),
+            },
+        )
+
+    def _now(self) -> str:
+        return datetime.now().isoformat(timespec="seconds")

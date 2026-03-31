@@ -41,11 +41,12 @@ class RunPaths:
     memory: Path
     logs: Path
     logs_raw: Path
-    run_state: Path
+    run_manifest: Path
     control_dir: Path
     prompt_cache_dir: Path
     operator_state_dir: Path
     stages_dir: Path
+    handoff_dir: Path
     knowledge_base_dir: Path
     knowledge_base_entries: Path
     workspace_root: Path
@@ -67,6 +68,12 @@ class RunPaths:
 
     def stage_session_file(self, stage: StageSpec) -> Path:
         return self.operator_state_dir / f"{stage.slug}.session_id.txt"
+
+    def stage_session_state_file(self, stage: StageSpec) -> Path:
+        return self.operator_state_dir / f"{stage.slug}.session.json"
+
+    def stage_attempt_state_file(self, stage: StageSpec, attempt_no: int) -> Path:
+        return self.operator_state_dir / f"{stage.slug}.attempt_{attempt_no:02d}.json"
 
 
 @dataclass(frozen=True)
@@ -208,11 +215,12 @@ def build_run_paths(run_root: Path) -> RunPaths:
         memory=run_root / "memory.md",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
-        run_state=run_root / "run_state.json",
+        run_manifest=run_root / "run_manifest.json",
         control_dir=run_root / "control",
         prompt_cache_dir=run_root / "prompt_cache",
         operator_state_dir=run_root / "operator_state",
         stages_dir=run_root / "stages",
+        handoff_dir=run_root / "handoff",
         knowledge_base_dir=run_root / "knowledge_base",
         knowledge_base_entries=run_root / "knowledge_base" / "entries.jsonl",
         workspace_root=workspace_root,
@@ -234,6 +242,7 @@ def ensure_run_layout(paths: RunPaths) -> None:
     paths.prompt_cache_dir.mkdir(parents=True, exist_ok=True)
     paths.operator_state_dir.mkdir(parents=True, exist_ok=True)
     paths.stages_dir.mkdir(parents=True, exist_ok=True)
+    paths.handoff_dir.mkdir(parents=True, exist_ok=True)
     paths.knowledge_base_dir.mkdir(parents=True, exist_ok=True)
     paths.workspace_root.mkdir(parents=True, exist_ok=True)
 
@@ -366,6 +375,9 @@ def build_prompt(
     user_request: str,
     approved_memory: str,
     kb_context: str,
+    orchestration_context: str,
+    handoff_context: str,
+    manifest_context: str,
     revision_feedback: str | None,
 ) -> str:
     sections = [
@@ -402,6 +414,12 @@ def build_prompt(
         approved_memory.strip() or "_None yet._",
         "# Knowledge Base Context",
         kb_context.strip() or "No relevant knowledge-base entries yet.",
+        "# Routed Orchestration Context",
+        orchestration_context.strip() or "No routed orchestration context recorded yet.",
+        "# Stage Handoff Context",
+        handoff_context.strip() or "No stage handoff summaries available yet.",
+        "# Run Manifest State",
+        manifest_context.strip() or "No run manifest state available yet.",
         "# Revision Feedback",
         revision_feedback.strip() if revision_feedback else "None.",
     ]
@@ -413,6 +431,9 @@ def build_continuation_prompt(
     stage_template: str,
     paths: RunPaths,
     kb_context: str,
+    orchestration_context: str,
+    handoff_context: str,
+    manifest_context: str,
     revision_feedback: str | None,
 ) -> str:
     current_draft = paths.stage_tmp_file(stage)
@@ -453,6 +474,12 @@ def build_continuation_prompt(
         ),
         "# Knowledge Base Context",
         kb_context.strip() or "No relevant knowledge-base entries yet.",
+        "# Routed Orchestration Context",
+        orchestration_context.strip() or "No routed orchestration context recorded yet.",
+        "# Stage Handoff Context",
+        handoff_context.strip() or "No stage handoff summaries available yet.",
+        "# Run Manifest State",
+        manifest_context.strip() or "No run manifest state available yet.",
         "# New Feedback",
         revision_feedback.strip()
         if revision_feedback

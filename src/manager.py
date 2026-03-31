@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -13,28 +14,35 @@ from .knowledge_base import (
     search_knowledge_base,
     write_kb_entry,
 )
+from .manifest import (
+    build_manifest_context,
+    build_handoff_context,
+    ensure_run_manifest,
+    format_manifest_status,
+    initialize_run_manifest,
+    load_run_manifest,
+    mark_stage_approved_manifest,
+    mark_stage_failed_manifest,
+    mark_stage_human_review_manifest,
+    mark_stage_running_manifest,
+    rebuild_memory_from_manifest,
+    rollback_to_stage,
+    sync_stage_session_id,
+    update_manifest_run_status,
+    write_stage_handoff,
+)
 from .operator import ClaudeOperator
 from .platform.fault_tolerance import CheckpointManager
 from .platform.observability import ObservabilityCollector
-from .platform.orchestration import HierarchicalPattern, ParallelPattern, SequentialPattern, SwarmPattern
-from .platform.types import PipelineStage, ProvenanceRecord, ResearchTask, TaskResult
+from .platform.router import ResearchPipelineRouter
 from .run_state import (
-    ensure_run_state,
+    derive_run_state,
     format_run_state,
-    initialize_run_state,
-    load_run_state,
-    mark_run_cancelled,
-    mark_run_completed,
-    mark_run_failed,
-    mark_stage_approved,
-    mark_stage_human_review,
-    mark_stage_running,
 )
 from .utils import (
     STAGES,
     RunPaths,
     StageSpec,
-    append_approved_stage_summary,
     append_log_entry,
     build_continuation_prompt,
     build_prompt,
@@ -67,6 +75,7 @@ class ResearchManager:
         self.project_root = project_root
         self.runs_dir = runs_dir
         self.operator = operator
+        self.router = ResearchPipelineRouter()
         self.prompt_dir = self.project_root / "src" / "prompts"
         self.output_stream = output_stream
 
@@ -75,7 +84,12 @@ class ResearchManager:
         self._print(f"Run created at: {paths.run_root}")
         return self.execute_run_paths(paths)
 
-    def resume_run(self, run_root: Path, start_stage: StageSpec | None = None) -> bool:
+    def resume_run(
+        self,
+        run_root: Path,
+        start_stage: StageSpec | None = None,
+        rollback_stage: StageSpec | None = None,
+    ) -> bool:
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
         if not paths.user_input.exists():
@@ -84,13 +98,21 @@ class ResearchManager:
             raise FileNotFoundError(f"Missing memory.md in run: {run_root}")
 
         initialize_knowledge_base(paths, read_text(paths.user_input))
-        ensure_run_state(paths)
+        ensure_run_manifest(paths)
+
+        if rollback_stage is not None:
+            self._print(self._format_rollback_preview(paths, rollback_stage))
+            rollback_to_stage(paths, rollback_stage)
+            start_stage = rollback_stage
+        elif start_stage is not None:
+            self._auto_rollback_if_needed(paths, start_stage)
 
         append_log_entry(
             paths.logs,
             "run_resume",
             f"Resumed run at: {paths.run_root}"
-            + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else ""),
+            + (f"\nRequested start stage: {start_stage.stage_title}" if start_stage else "")
+            + (f"\nRequested rollback stage: {rollback_stage.stage_title}" if rollback_stage else ""),
         )
         self._print(f"Resuming run at: {paths.run_root}")
         if start_stage:
@@ -110,7 +132,13 @@ class ResearchManager:
         try:
             return self._run_from_paths(paths, start_stage=start_stage)
         except Exception as exc:
-            mark_run_failed(paths, error=str(exc), stage=start_stage)
+            update_manifest_run_status(
+                paths,
+                run_status="failed",
+                last_event="run.failed",
+                last_error=str(exc),
+                current_stage_slug=start_stage.slug if start_stage else None,
+            )
             write_kb_entry(
                 paths,
                 entry_type="run_failed",
@@ -133,7 +161,12 @@ class ResearchManager:
                     "run_aborted",
                     f"Run aborted during {stage.stage_title}.",
                 )
-                mark_run_cancelled(paths, stage=stage)
+                update_manifest_run_status(
+                    paths,
+                    run_status="cancelled",
+                    last_event="run.cancelled",
+                    current_stage_slug=stage.slug,
+                )
                 write_kb_entry(
                     paths,
                     entry_type="run_cancelled",
@@ -147,7 +180,14 @@ class ResearchManager:
                 return False
 
         append_log_entry(paths.logs, "run_complete", "All stages approved.")
-        mark_run_completed(paths)
+        completed_at = self._now()
+        update_manifest_run_status(
+            paths,
+            run_status="completed",
+            last_event="run.completed",
+            completed_at=completed_at,
+            current_stage_slug=None,
+        )
         write_kb_entry(
             paths,
             entry_type="run_completed",
@@ -166,7 +206,7 @@ class ResearchManager:
         write_text(paths.user_input, user_goal)
         initialize_memory(paths, user_goal)
         initialize_knowledge_base(paths, user_goal)
-        initialize_run_state(paths)
+        initialize_run_manifest(paths)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
         return paths
 
@@ -178,11 +218,11 @@ class ResearchManager:
         if start_stage is not None:
             return [stage for stage in STAGES if stage.number >= start_stage.number]
 
-        approved_memory = read_text(paths.memory)
+        manifest = ensure_run_manifest(paths)
         pending: list[StageSpec] = []
         for stage in STAGES:
-            final_stage_path = paths.stage_file(stage)
-            if final_stage_path.exists() and stage.stage_title in approved_memory:
+            entry = next(entry for entry in manifest.stages if entry.slug == stage.slug)
+            if entry.approved and entry.status == "approved":
                 continue
             pending.append(stage)
 
@@ -195,7 +235,7 @@ class ResearchManager:
 
         while True:
             orchestration_summary = self._execute_stage_orchestration(paths, stage, attempt_no)
-            mark_stage_running(paths, stage, attempt_no)
+            mark_stage_running_manifest(paths, stage, attempt_no)
             write_kb_entry(
                 paths,
                 entry_type="stage_attempt_started",
@@ -213,7 +253,13 @@ class ResearchManager:
                 tags=["stage", "attempt", "running", stage.slug],
             )
             self._print(f"\nRunning {stage.stage_title} (attempt {attempt_no})...")
-            prompt = self._build_stage_prompt(paths, stage, revision_feedback, continue_session)
+            prompt = self._build_stage_prompt(
+                paths,
+                stage,
+                revision_feedback,
+                continue_session,
+                orchestration_summary,
+            )
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} prompt",
@@ -227,6 +273,8 @@ class ResearchManager:
                 attempt_no,
                 continue_session=continue_session,
             )
+            if result.session_id:
+                sync_stage_session_id(paths, stage, result.session_id)
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} result",
@@ -275,6 +323,7 @@ class ResearchManager:
                 result = repair_result
 
             if not result.stage_file_path.exists():
+                mark_stage_failed_manifest(paths, stage, "stage_summary_missing")
                 raise RuntimeError(
                     f"Stage summary draft was not generated for {stage.slug}: {result.stage_file_path}"
                 )
@@ -365,6 +414,7 @@ class ResearchManager:
                     stage_markdown = read_text(repair_result.stage_file_path)
                     validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
                     if validation_errors:
+                        mark_stage_failed_manifest(paths, stage, "; ".join(validation_errors))
                         append_log_entry(
                             paths.logs,
                             f"{stage.slug} attempt {attempt_no} local_normalization_failed",
@@ -399,7 +449,6 @@ class ResearchManager:
                 ),
             )
             stage_markdown = read_text(final_stage_path)
-            mark_stage_human_review(paths, stage, attempt_no)
             write_kb_entry(
                 paths,
                 entry_type="stage_validated",
@@ -409,6 +458,12 @@ class ResearchManager:
                 stage=stage,
                 file_paths=self._stage_file_paths(paths, stage, stage_markdown),
                 tags=["stage", "validated", "human_review", stage.slug],
+            )
+            mark_stage_human_review_manifest(
+                paths,
+                stage,
+                attempt_no,
+                self._stage_file_paths(paths, stage, stage_markdown),
             )
 
             self._display_stage_output(stage, stage_markdown)
@@ -468,8 +523,16 @@ class ResearchManager:
                 continue
 
             if choice == "5":
-                append_approved_stage_summary(paths.memory, stage, stage_markdown)
-                mark_stage_approved(paths, stage)
+                handoff_path = write_stage_handoff(paths, stage, stage_markdown)
+                mark_stage_approved_manifest(
+                    paths,
+                    stage,
+                    attempt_no,
+                    self._stage_file_paths(paths, stage, stage_markdown),
+                    compressed_summary=self._compress_stage_handoff(stage_markdown),
+                    handoff_path=str(handoff_path.relative_to(paths.run_root)),
+                )
+                rebuild_memory_from_manifest(paths)
                 append_log_entry(
                     paths.logs,
                     f"{stage.slug} approved",
@@ -489,7 +552,13 @@ class ResearchManager:
                 return True
 
             if choice == "6":
-                mark_run_cancelled(paths, stage=stage)
+                mark_stage_failed_manifest(paths, stage, "user_aborted")
+                update_manifest_run_status(
+                    paths,
+                    run_status="cancelled",
+                    last_event="run.cancelled",
+                    current_stage_slug=stage.slug,
+                )
                 write_kb_entry(
                     paths,
                     entry_type="stage_aborted",
@@ -508,16 +577,39 @@ class ResearchManager:
         stage: StageSpec,
         revision_feedback: str | None,
         continue_session: bool,
+        orchestration_summary: dict[str, object],
     ) -> str:
         template = load_prompt_template(self.prompt_dir, stage)
         stage_template = format_stage_template(template, stage, paths)
         kb_context = self._build_kb_context(paths, stage)
+        orchestration_context = self._format_orchestration_context(orchestration_summary)
+        handoff_context = build_handoff_context(paths, upto_stage=stage)
+        manifest_context = build_manifest_context(paths, upto_stage=stage)
         if continue_session:
-            return build_continuation_prompt(stage, stage_template, paths, kb_context, revision_feedback)
+            return build_continuation_prompt(
+                stage,
+                stage_template,
+                paths,
+                kb_context,
+                orchestration_context,
+                handoff_context,
+                manifest_context,
+                revision_feedback,
+            )
 
         user_request = read_text(paths.user_input)
         approved_memory = read_text(paths.memory)
-        return build_prompt(stage, stage_template, user_request, approved_memory, kb_context, revision_feedback)
+        return build_prompt(
+            stage,
+            stage_template,
+            user_request,
+            approved_memory,
+            kb_context,
+            orchestration_context,
+            handoff_context,
+            manifest_context,
+            revision_feedback,
+        )
 
     def _display_stage_output(self, stage: StageSpec, markdown: str) -> None:
         divider = "=" * 80
@@ -554,44 +646,53 @@ class ResearchManager:
     def _print(self, text: str) -> None:
         print(text, file=self.output_stream)
 
-    def _execute_stage_orchestration(self, paths: RunPaths, stage: StageSpec, attempt_no: int) -> dict[str, object]:
-        subtasks = self._build_stage_subtasks(paths, stage, attempt_no)
-        runner = self._orchestration_runner()
-        pattern_name = stage.orchestration_pattern.lower()
-        if "parallel" in pattern_name and "+" in pattern_name:
-            pattern = SequentialPattern()
-            results = pattern.execute(subtasks, runner)
-        elif "parallel" in pattern_name:
-            results = ParallelPattern(max_workers=min(len(subtasks), 4)).execute(subtasks, runner)
-        elif "hierarchical" in pattern_name:
-            results = HierarchicalPattern().execute(subtasks[0], planner=lambda _root: subtasks, runner=runner)
-        elif "swarm" in pattern_name:
-            results = SwarmPattern(rounds=2).execute(subtasks, runner)
-        else:
-            results = SequentialPattern().execute(subtasks, runner)
+    def _now(self) -> str:
+        return datetime.now().isoformat(timespec="seconds")
 
-        summary = {
-            "stage_slug": stage.slug,
-            "attempt_no": attempt_no,
-            "pattern": stage.orchestration_pattern,
-            "subtask_count": len(subtasks),
-            "subtasks": [
-                {
-                    "task_id": task.task_id,
-                    "title": task.title,
-                    "goal": task.goal,
-                }
-                for task in subtasks
-            ],
-            "results": [
-                {
-                    "task_id": result.task_id,
-                    "output": result.output,
-                    "provenance": [record.action for record in result.provenance],
-                }
-                for result in results
-            ],
-        }
+    def _auto_rollback_if_needed(self, paths: RunPaths, start_stage: StageSpec) -> None:
+        manifest = ensure_run_manifest(paths)
+        approved_numbers = [entry.number for entry in manifest.stages if entry.approved]
+        if approved_numbers and start_stage.number <= max(approved_numbers):
+            rollback_to_stage(paths, start_stage)
+
+    def _format_rollback_preview(self, paths: RunPaths, rollback_stage: StageSpec) -> str:
+        manifest = ensure_run_manifest(paths)
+        stale_candidates = [
+            entry.slug
+            for entry in manifest.stages
+            if entry.number > rollback_stage.number and (entry.approved or entry.status not in {"pending"})
+        ]
+        lines = [
+            f"Rolling back to {rollback_stage.stage_title}.",
+            f"Stage {rollback_stage.slug} will be marked pending/dirty.",
+        ]
+        if stale_candidates:
+            lines.append("Downstream stages that will be marked stale:")
+            lines.extend(f"- {slug}" for slug in stale_candidates)
+        else:
+            lines.append("No downstream stages currently need invalidation.")
+        return "\n".join(lines)
+
+    def _compress_stage_handoff(self, stage_markdown: str) -> str:
+        objective = extract_markdown_section(stage_markdown, "Objective") or ""
+        key_results = extract_markdown_section(stage_markdown, "Key Results") or ""
+        files_produced = extract_markdown_section(stage_markdown, "Files Produced") or ""
+        return "\n".join(
+            [
+                f"Objective: {truncate_text(objective, max_chars=240)}",
+                f"Key Results: {truncate_text(key_results, max_chars=360)}",
+                f"Files Produced: {truncate_text(files_produced, max_chars=240)}",
+            ]
+        ).strip()
+
+    def _execute_stage_orchestration(self, paths: RunPaths, stage: StageSpec, attempt_no: int) -> dict[str, object]:
+        summary = self.router.execute(
+            paths=paths,
+            stage=stage,
+            attempt_no=attempt_no,
+            user_goal=read_text(paths.user_input).strip(),
+            kb_context=self._build_kb_context(paths, stage),
+        ).to_dict()
 
         plan_path = paths.notes_dir / f"{stage.slug}_attempt_{attempt_no:02d}_orchestration.json"
         write_text(plan_path, json.dumps(summary, indent=2, ensure_ascii=True))
@@ -606,59 +707,29 @@ class ResearchManager:
         )
         collector.emit_metric(
             "autor.orchestration.subtask_count",
-            float(len(subtasks)),
+            float(summary.get("subtask_count", 0)),
             run_id=paths.run_root.name,
             stage_slug=stage.slug,
         )
         return summary
 
-    def _build_stage_subtasks(self, paths: RunPaths, stage: StageSpec, attempt_no: int) -> list[ResearchTask]:
-        stage_key: PipelineStage = stage.slug[3:]
-        project_id = paths.run_root.name
-        goal = read_text(paths.user_input).strip()
-
-        subtask_titles: dict[str, list[str]] = {
-            "01_literature_survey": ["Search sources", "Extract evidence", "Merge survey map"],
-            "02_hypothesis_generation": ["Propose hypotheses", "Critique hypotheses", "Synthesize direction"],
-            "03_study_design": ["Plan protocol", "Define variables", "Set evaluation criteria"],
-            "04_implementation": ["Prepare environment", "Implement pipeline", "Validate execution"],
-            "05_experimentation": ["Set experiment plan", "Run experiments", "Aggregate checkpoints"],
-            "06_analysis": ["Compute statistics", "Generate visuals", "Interpret findings"],
-            "07_writing": ["Outline manuscript", "Draft sections", "Check consistency"],
-            "08_dissemination": ["Draft poster", "Draft slides", "Draft social summary"],
-        }
-
-        tasks: list[ResearchTask] = []
-        for index, title in enumerate(subtask_titles.get(stage.slug, [stage.display_name]), start=1):
-            tasks.append(
-                ResearchTask(
-                    task_id=f"{stage.slug}-attempt-{attempt_no:02d}-task-{index:02d}",
-                    title=title,
-                    goal=f"{goal}\n\nStage focus: {stage.stage_title}\nSubtask: {title}",
-                    pipeline_stage=stage_key,
-                    project_id=project_id,
-                    kb_context=[paths.run_root.name, stage.slug],
-                    human_gate_required=False,
-                    reproducibility_notes=[f"Attempt {attempt_no}", stage.orchestration_pattern],
-                )
-            )
-        return tasks
-
-    def _orchestration_runner(self) -> callable:
-        def _run(task: ResearchTask) -> TaskResult:
-            return TaskResult(
-                task_id=task.task_id,
-                output=f"Completed orchestration subtask: {task.title}",
-                provenance=[
-                    ProvenanceRecord(
-                        agent_name="AutoROrchestrator",
-                        action=f"planned:{task.title}",
-                        evidence=[task.pipeline_stage, task.project_id],
-                    )
-                ],
-            )
-
-        return _run
+    def _format_orchestration_context(self, summary: dict[str, object]) -> str:
+        artifacts = summary.get("artifact_paths", []) or []
+        results = summary.get("results", []) or []
+        lines = [
+            f"Pattern: {summary.get('pattern', 'unknown')}",
+            f"Subtasks: {summary.get('subtask_count', 0)}",
+            f"Summary: {summary.get('summary_text', '')}",
+        ]
+        if artifacts:
+            lines.append("Artifacts: " + ", ".join(f"`{path}`" for path in artifacts[:8]))
+        if results:
+            lines.append("Representative outputs:")
+            for item in results[:3]:
+                label = item.get("title") or item.get("task_id") or item.get("agent_name") or "result"
+                payload = item.get("output") or item.get("content") or str(item)
+                lines.append(f"- {label}: {truncate_text(str(payload), max_chars=220)}")
+        return "\n".join(lines)
 
     def _build_kb_context(self, paths: RunPaths, stage: StageSpec) -> str:
         user_request = read_text(paths.user_input)
@@ -681,11 +752,10 @@ class ResearchManager:
     def describe_run_status(self, run_root: Path) -> str:
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
-        ensure_run_state(paths)
-        state = load_run_state(paths.run_state)
-        if state is None:
-            raise RuntimeError(f"Could not load run state from {paths.run_state}")
-        return format_run_state(state)
+        manifest = load_run_manifest(paths.run_manifest)
+        if manifest is not None:
+            return format_manifest_status(manifest)
+        raise RuntimeError(f"Could not load run manifest from {paths.run_manifest}")
 
     def search_run_knowledge_base(self, run_root: Path, query: str, limit: int = 5) -> str:
         paths = build_run_paths(run_root)

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .knowledge_base import KBSearchResult, load_kb_entries, search_knowledge_base
-from .run_state import RunState, load_run_state
+from .manifest import load_run_manifest
 from .utils import STAGES, StageSpec, approved_stage_summaries, build_run_paths, read_text
 
 
@@ -21,13 +21,13 @@ def run_exists(runs_dir: Path, run_id: str) -> bool:
 
 def build_run_snapshot(run_root: Path) -> dict[str, object]:
     paths = build_run_paths(run_root)
-    run_state = load_run_state(paths.run_state)
+    manifest = load_run_manifest(paths.run_manifest)
     memory_text = read_text(paths.memory) if paths.memory.exists() else ""
     approved_memory = approved_stage_summaries(memory_text)
     approved_titles = {
-        item.get("title", "")
-        for item in (run_state.approved_stages if run_state else [])
-        if isinstance(item, dict)
+        entry.title
+        for entry in (manifest.stages if manifest else [])
+        if entry.approved
     }
     kb_entries = load_kb_entries(paths.knowledge_base_entries)
 
@@ -53,17 +53,17 @@ def build_run_snapshot(run_root: Path) -> dict[str, object]:
     snapshot = {
         "run_id": run_root.name,
         "run_root": str(run_root),
-        "status": run_state.status if run_state else "UNKNOWN",
-        "last_event": run_state.last_event if run_state else None,
-        "updated_at": run_state.updated_at if run_state else None,
-        "current_stage_slug": run_state.current_stage_slug if run_state else None,
-        "current_stage_title": run_state.current_stage_title if run_state else None,
-        "current_pattern": run_state.current_pattern if run_state else None,
-        "current_attempt": run_state.current_attempt if run_state else None,
-        "waiting_for_human_review": run_state.waiting_for_human_review if run_state else False,
-        "last_error": run_state.last_error if run_state else None,
-        "completed_at": run_state.completed_at if run_state else None,
-        "approved_stage_count": len(run_state.approved_stages) if run_state else 0,
+        "status": manifest.run_status.upper() if manifest else "UNKNOWN",
+        "last_event": manifest.last_event if manifest else None,
+        "updated_at": manifest.updated_at if manifest else None,
+        "current_stage_slug": manifest.current_stage_slug if manifest else None,
+        "current_stage_title": next((entry.title for entry in manifest.stages if entry.slug == manifest.current_stage_slug), None) if manifest and manifest.current_stage_slug else None,
+        "current_pattern": None,
+        "current_attempt": next((entry.attempt_count for entry in manifest.stages if entry.slug == manifest.current_stage_slug), None) if manifest and manifest.current_stage_slug else None,
+        "waiting_for_human_review": manifest.run_status == "human_review" if manifest else False,
+        "last_error": manifest.last_error if manifest else None,
+        "completed_at": manifest.completed_at if manifest else None,
+        "approved_stage_count": len([entry for entry in manifest.stages if entry.approved]) if manifest else 0,
         "knowledge_base_entry_count": len(kb_entries),
         "knowledge_base_entry_types": _count_entry_types(kb_entries),
         "stages": stage_statuses,
@@ -89,9 +89,9 @@ def list_run_summaries(runs_dir: Path) -> list[dict[str, object]]:
     return summaries
 
 
-def load_run_state_snapshot(run_root: Path) -> RunState | None:
+def load_run_state_snapshot(run_root: Path) -> object | None:
     paths = build_run_paths(run_root)
-    return load_run_state(paths.run_state)
+    return load_run_manifest(paths.run_manifest)
 
 
 def list_run_kb_entries(

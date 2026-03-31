@@ -56,7 +56,7 @@ File boundaries:
 
 ## Workspace Structure
 
-Each run contains `user_input.txt`, `memory.md`, `knowledge_base/`, `run_state.json`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
+Each run contains `user_input.txt`, `memory.md`, `knowledge_base/`, `run_manifest.json`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
 
 ```mermaid
 flowchart TD
@@ -259,6 +259,12 @@ Redo from a specific stage inside the same run:
 python main.py --resume-run 20260329_210252 --redo-stage 03
 ```
 
+Roll back to a specific stage and mark downstream stages stale:
+
+```bash
+python main.py --resume-run 20260329_210252 --rollback-stage 03
+```
+
 `--resume-run ... --redo-stage ...` continues inside the existing run directory. It does not create a new run.
 
 Valid stage identifiers include `03`, `3`, and `03_study_design`.
@@ -278,6 +284,10 @@ python main.py --resume-run latest --kb-search "hypothesis evidence" --kb-limit 
 Platform-alignment layer under `src/platform/` now includes:
 
 - orchestration patterns: sequential, parallel, hierarchical, swarm
+- research pipeline router and stage-specific workflow engines
+- literature-source adapters plus citation validation
+- multi-agent hypothesis debate workflow
+- overnight playbook execution with self-monitoring primitives
 - A2A/MCP-style protocol bridge primitives
 - agent runtime manager and command-style research agents
 - semantic retrieval for Knowledge Base ranking
@@ -303,10 +313,16 @@ Included:
 - draft-to-final stage promotion
 - resume and redo-stage support
 - artifact-level validation
-- structured `run_state.json` lifecycle tracking
+- manifest-first lifecycle tracking via `run_manifest.json`
 - per-run Knowledge Base with prompt injection and CLI search
 - stage-pattern metadata aligned with the ClawDock research design
 - platform-alignment modules for orchestration, protocols, runtimes, Foundry, observability, security, sandboxing, messaging, and deployment
+- machine-readable `run_manifest.json` stage state tracking
+- stage handoff summaries under `handoff/`
+- cross-stage rollback with downstream stale invalidation
+- operator attempt/session recovery state under `operator_state/`
+- Stage 07 paper package generation with LaTeX/bib/table/checklist/PDF artifacts
+- Stage 08 review and dissemination package generation with readiness/release materials
 
 Out of scope:
 
