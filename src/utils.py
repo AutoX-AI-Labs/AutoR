@@ -33,6 +33,7 @@ class RunPaths:
     user_input: Path
     memory: Path
     run_config: Path
+    run_manifest: Path
     logs: Path
     logs_raw: Path
     prompt_cache_dir: Path
@@ -142,6 +143,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         user_input=run_root / "user_input.txt",
         memory=run_root / "memory.md",
         run_config=run_root / "run_config.json",
+        run_manifest=run_root / "run_manifest.json",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
         prompt_cache_dir=run_root / "prompt_cache",
@@ -697,6 +699,22 @@ def _extract_loose_list_items(section_text: str) -> list[str]:
             items.append(bullet_match.group(1).strip())
 
     return items
+
+
+def extract_path_references(text: str) -> list[str]:
+    seen: set[str] = set()
+    paths: list[str] = []
+
+    for candidate in re.findall(r"`([^`]+)`", text):
+        normalized = candidate.strip()
+        if not normalized or "/" not in normalized:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        paths.append(normalized)
+
+    return paths
 
 
 def _extract_path_references(text: str) -> list[str]:
