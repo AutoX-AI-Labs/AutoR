@@ -34,15 +34,15 @@ Expected behavior:
 
 ## File Convention
 
-All writing output must stay under `{{WORKSPACE_WRITING_DIR}}`. The expected structure is:
+All writing output must stay under `{{WORKSPACE_WRITING_DIR}}`. The recommended structure is:
 
 ```text
 writing/
-├── main.tex
+├── main.tex              (required)
 ├── math_commands.tex
-├── references.bib
+├── references.bib        (preferred over inline bibliography)
 ├── manifest.json
-├── sections/
+├── sections/             (optional — single-file main.tex is acceptable)
 │   ├── abstract.tex
 │   ├── introduction.tex
 │   ├── related_work.tex
@@ -55,13 +55,30 @@ writing/
     └── main_results.tex
 ```
 
-Additional generated artifacts should go under `{{WORKSPACE_ARTIFACTS_DIR}}`, such as:
+A single-file `main.tex` containing all sections is acceptable, especially for shorter papers.
+If you use a single file, you do not need to create the `sections/` directory.
 
-- `paper.pdf`
-- `build_log.txt`
-- `citation_verification.json`
-- `self_review.json`
-- `submission_bundle.zip`
+### Bibliography
+
+Prefer generating a `references.bib` file with BibTeX entries and using `\bibliography{references}` in `main.tex`. This is more flexible for venue changes and easier to verify.
+
+If generating a `.bib` file is not feasible, use `\begin{thebibliography}` as a fallback. Both formats pass validation.
+
+### Required Artifacts
+
+The following artifacts must go under `{{WORKSPACE_ARTIFACTS_DIR}}`:
+
+- `paper.pdf` — compiled manuscript (required)
+- `build_log.txt` — redirect or save LaTeX compilation output here
+- `citation_verification.json` — verify each citation matches a bibliography entry:
+  ```json
+  {"citations": [{"key": "xu2019", "in_bib": true, "in_text": true}], "unresolved": []}
+  ```
+- `self_review.json` — rate each section's completeness:
+  ```json
+  {"sections": [{"name": "Introduction", "complete": true, "issues": []}], "overall_score": 4}
+  ```
+- `submission_bundle.zip` (optional)
 
 ## Available Workspace Artifacts
 

@@ -208,19 +208,59 @@ class WritingPipelineTests(unittest.TestCase):
         problems = validate_stage_artifacts(STAGE_07, paths)
         self.assertTrue(any("Expected venue: nature" in problem for problem in problems))
 
-    def test_stage07_validation_requires_build_log(self) -> None:
+    def test_stage07_missing_build_log_with_pdf_is_warning(self) -> None:
         _, paths = self._build_paths()
         self._populate_valid_stage07_outputs(paths)
         (paths.artifacts_dir / "build_log.txt").unlink()
         problems = validate_stage_artifacts(STAGE_07, paths)
-        self.assertTrue(any("build_log.txt" in problem for problem in problems))
+        build_log_issues = [p for p in problems if "build_log.txt" in p]
+        self.assertTrue(len(build_log_issues) > 0)
+        self.assertTrue(all(p.startswith("[warning]") for p in build_log_issues))
 
-    def test_stage07_validation_requires_self_review(self) -> None:
+    def test_stage07_missing_build_log_without_pdf_is_error(self) -> None:
+        _, paths = self._build_paths()
+        self._populate_valid_stage07_outputs(paths)
+        (paths.artifacts_dir / "build_log.txt").unlink()
+        (paths.artifacts_dir / "paper.pdf").unlink()
+        # Also remove any PDF in writing dir
+        for f in paths.writing_dir.glob("*.pdf"):
+            f.unlink()
+        problems = validate_stage_artifacts(STAGE_07, paths)
+        pdf_errors = [p for p in problems if "PDF" in p and not p.startswith("[warning]")]
+        self.assertTrue(len(pdf_errors) > 0)
+
+    def test_stage07_missing_self_review_is_warning(self) -> None:
         _, paths = self._build_paths()
         self._populate_valid_stage07_outputs(paths)
         (paths.artifacts_dir / "self_review.json").unlink()
         problems = validate_stage_artifacts(STAGE_07, paths)
-        self.assertTrue(any("self_review.json" in problem for problem in problems))
+        sr_issues = [p for p in problems if "self_review.json" in p]
+        self.assertTrue(len(sr_issues) > 0)
+        self.assertTrue(all(p.startswith("[warning]") for p in sr_issues))
+
+    def test_stage07_single_file_main_tex_without_sections_passes(self) -> None:
+        _, paths = self._build_paths()
+        self._populate_valid_stage07_outputs(paths)
+        # Remove sections/ directory entirely
+        import shutil
+        sections_dir = paths.writing_dir / "sections"
+        if sections_dir.exists():
+            shutil.rmtree(sections_dir)
+        problems = validate_stage_artifacts(STAGE_07, paths)
+        errors = [p for p in problems if not p.startswith("[warning]")]
+        self.assertEqual(errors, [], f"Unexpected errors: {errors}")
+
+    def test_stage07_empty_sections_dir_is_warning(self) -> None:
+        _, paths = self._build_paths()
+        self._populate_valid_stage07_outputs(paths)
+        # Remove all .tex files from sections/ but keep directory
+        sections_dir = paths.writing_dir / "sections"
+        for f in sections_dir.glob("*.tex"):
+            f.unlink()
+        problems = validate_stage_artifacts(STAGE_07, paths)
+        section_issues = [p for p in problems if "sections/" in p]
+        self.assertTrue(len(section_issues) > 0)
+        self.assertTrue(all(p.startswith("[warning]") for p in section_issues))
 
     def test_scan_figures_returns_expected_metadata(self) -> None:
         _, paths = self._build_paths()
