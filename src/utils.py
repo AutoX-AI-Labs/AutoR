@@ -449,12 +449,60 @@ def build_continuation_prompt(
             "8. Do not leave placeholder text such as [In progress], [Pending], [TODO], [TBD], or similar unfinished markers.\n"
             "9. If the existing stage work is partially correct, keep the correct parts and extend them rather than replacing them blindly."
         ),
+        "# Current Stage Context",
+        _build_inline_context(stage, paths),
         "# New Feedback",
         revision_feedback.strip()
         if revision_feedback
         else "Continue improving the current stage output and fix the issues from the previous attempt.",
     ]
     return "\n\n".join(sections).strip() + "\n"
+
+
+def _build_inline_context(stage: StageSpec, paths: RunPaths) -> str:
+    parts: list[str] = []
+
+    user_goal = read_text(paths.user_input).strip() if paths.user_input.exists() else ""
+    if user_goal:
+        parts.append(f"**User Goal**: {truncate_text(user_goal, 500)}")
+
+    for path in [paths.stage_file(stage), paths.stage_tmp_file(stage)]:
+        if path.exists():
+            text = read_text(path)
+            objective = extract_markdown_section(text, "Objective")
+            if objective:
+                parts.append(f"**Current Stage Objective**: {truncate_text(objective, 500)}")
+            break
+
+    memory_text = read_text(paths.memory) if paths.memory.exists() else ""
+    if memory_text:
+        recent = _extract_recent_stage_summaries(memory_text, stage, max_stages=2)
+        if recent:
+            parts.append(f"**Recent Approved Context**:\n{recent}")
+
+    return "\n\n".join(parts) if parts else "No additional context available."
+
+
+def _extract_recent_stage_summaries(
+    memory_text: str, current_stage: StageSpec, max_stages: int = 2
+) -> str:
+    pattern = re.compile(r"(### Stage \d{2}: .+?)(?=### Stage \d{2}: |\Z)", re.DOTALL)
+    matches = pattern.findall(memory_text)
+    relevant = [m for m in matches if not m.startswith(f"### {current_stage.stage_title}")]
+    recent = relevant[-max_stages:]
+    summaries: list[str] = []
+    for match in recent:
+        lines = match.strip().split("\n")
+        title = lines[0] if lines else ""
+        # Memory entries use #### Objective (h4), not ## Objective (h2)
+        obj_pattern = re.compile(r"^####\s+Objective\s*$\n?(.*?)(?=^####\s|\Z)", re.MULTILINE | re.DOTALL)
+        obj_match = obj_pattern.search(match)
+        obj = obj_match.group(1).strip() if obj_match else ""
+        if obj:
+            summaries.append(f"{title}\n{truncate_text(obj, 300)}")
+        else:
+            summaries.append(title)
+    return "\n\n".join(summaries)
 
 
 def truncate_text(text: str, max_chars: int = 12000) -> str:
@@ -656,12 +704,55 @@ def render_approved_stage_entry(stage: StageSpec, stage_markdown: str) -> str:
     )
 
 
+def render_compact_stage_entry(
+    stage: StageSpec,
+    stage_markdown: str,
+    max_section_chars: int = 2000,
+) -> str:
+    objective = extract_markdown_section(stage_markdown, "Objective") or "Not provided."
+    what_i_did = extract_markdown_section(stage_markdown, "What I Did") or "Not provided."
+    key_results = extract_markdown_section(stage_markdown, "Key Results") or "Not provided."
+    files_produced = extract_markdown_section(stage_markdown, "Files Produced") or "Not provided."
+
+    what_i_did = _truncate_section(what_i_did, max_section_chars)
+    key_results = _truncate_section(key_results, max_section_chars)
+
+    return (
+        f"### {stage.stage_title}\n\n"
+        "#### Objective\n"
+        f"{objective}\n\n"
+        "#### What I Did\n"
+        f"{what_i_did}\n\n"
+        "#### Key Results\n"
+        f"{key_results}\n\n"
+        "#### Files Produced\n"
+        f"{files_produced}"
+    )
+
+
+def _truncate_section(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    cutoff = text.rfind("\n\n", 0, max_chars)
+    if cutoff < max_chars // 2:
+        cutoff = max_chars
+    return text[:cutoff].rstrip() + "\n\n...(see workspace files for full details)"
+
+
 def append_approved_stage_summary(memory_path: Path, stage: StageSpec, stage_markdown: str) -> None:
     current = read_text(memory_path)
-    entry = render_approved_stage_entry(stage, stage_markdown)
+    entry = render_compact_stage_entry(stage, stage_markdown)
 
+    stage_heading = f"### {stage.stage_title}"
     placeholder = "_None yet._"
-    if placeholder in current:
+
+    if stage_heading in current:
+        pattern = re.compile(
+            rf"### {re.escape(stage.stage_title)}\n.*?(?=### Stage \d|$)",
+            re.DOTALL,
+        )
+        updated = pattern.sub(entry, current, count=1)
+    elif placeholder in current:
         updated = current.replace(placeholder, entry, 1)
     else:
         updated = current.rstrip() + "\n\n" + entry + "\n"
