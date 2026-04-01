@@ -44,6 +44,30 @@ Additional expectations for this stage:
 - `Files Produced` should list release, packaging, or communication artifacts.
 - `Suggestions for Refinement` should focus on readiness, packaging quality, clarity of communication, or risk reduction before publication or release.
 
+## Required Readiness Report
+
+You must produce `{{WORKSPACE_REVIEWS_DIR}}/readiness_report.json` with the following structure:
+
+```json
+{
+  "ready": false,
+  "blocking_gaps": [
+    "Missing NodeFormer baseline comparison"
+  ],
+  "warnings": [
+    "Abstract may exceed venue word limit"
+  ],
+  "assets": [
+    {"path": "workspace/artifacts/paper.pdf", "status": "ready"},
+    {"path": "workspace/code/", "status": "needs_cleanup"}
+  ]
+}
+```
+
+Be honest. If there are blocking gaps that would prevent acceptance at the target venue,
+list them in `blocking_gaps`. AutoR will show these to the user before final approval.
+Set `ready` to `true` only if `blocking_gaps` is empty.
+
 ## Important Constraints
 
 - Do not present unfinished work as publication-ready if it is not.

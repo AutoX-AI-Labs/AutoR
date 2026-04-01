@@ -692,6 +692,36 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
     return problems
 
 
+def validate_dissemination_readiness(paths: RunPaths) -> list[str]:
+    warnings: list[str] = []
+
+    pdf_count = _count_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES)
+    pdf_count += _count_files_with_suffixes(paths.artifacts_dir, PDF_SUFFIXES)
+    if pdf_count == 0:
+        warnings.append("No compiled PDF found in workspace/writing or workspace/artifacts.")
+
+    if not (paths.writing_dir / "main.tex").exists():
+        warnings.append("No main.tex found in workspace/writing.")
+
+    review_files = _existing_files(paths.reviews_dir)
+    if not review_files:
+        warnings.append("No review/readiness files found in workspace/reviews.")
+
+    report_path = paths.reviews_dir / "readiness_report.json"
+    if report_path.exists():
+        try:
+            report = json.loads(read_text(report_path))
+            blocking = report.get("blocking_gaps", [])
+            for gap in blocking:
+                warnings.append(f"Blocking gap: {gap}")
+        except (json.JSONDecodeError, KeyError):
+            warnings.append("readiness_report.json exists but could not be parsed.")
+    else:
+        warnings.append("No readiness_report.json found. Stage 08 should produce this file.")
+
+    return warnings
+
+
 def render_approved_stage_entry(stage: StageSpec, stage_markdown: str) -> str:
     objective = extract_markdown_section(stage_markdown, "Objective") or "Not provided."
     what_i_did = extract_markdown_section(stage_markdown, "What I Did") or "Not provided."

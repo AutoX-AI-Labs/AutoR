@@ -29,6 +29,7 @@ from .utils import (
     read_attempt_count,
     read_text,
     truncate_text,
+    validate_dissemination_readiness,
     validate_stage_artifacts,
     validate_stage_markdown,
     write_attempt_count,
@@ -370,6 +371,18 @@ class ResearchManager:
                 continue
 
             if choice == "5":
+                if stage.number == 8:
+                    readiness_warnings = validate_dissemination_readiness(paths)
+                    if readiness_warnings:
+                        self._print(f"\n{'=' * 60}")
+                        self._print(f"Readiness warnings ({len(readiness_warnings)}):")
+                        for w in readiness_warnings:
+                            self._print(f"  - {w}")
+                        self._print(f"{'=' * 60}")
+                        confirm = input("Type 'yes' to approve despite warnings, or anything else to go back: ").strip()
+                        if confirm.lower() != "yes":
+                            continue
+
                 append_approved_stage_summary(paths.memory, stage, stage_markdown)
                 append_log_entry(
                     paths.logs,
