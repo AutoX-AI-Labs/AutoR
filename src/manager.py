@@ -215,7 +215,13 @@ class ResearchManager:
                 )
 
             stage_markdown = read_text(result.stage_file_path)
-            validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
+            all_issues = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
+            validation_warnings = [e for e in all_issues if e.startswith("[warning]")]
+            validation_errors = [e for e in all_issues if not e.startswith("[warning]")]
+            if validation_warnings:
+                self._print(f"Warnings for {stage.stage_title}:")
+                for w in validation_warnings:
+                    self._print(f"  {w}")
             if validation_errors:
                 self._print(
                     f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt..."
@@ -261,7 +267,8 @@ class ResearchManager:
                     )
 
                 stage_markdown = read_text(repair_result.stage_file_path)
-                validation_errors = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
+                all_issues = validate_stage_markdown(stage_markdown) + validate_stage_artifacts(stage, paths)
+                validation_errors = [e for e in all_issues if not e.startswith("[warning]")]
                 if validation_errors:
                     self._print(
                         f"Repair output for {stage.stage_title} is still incomplete. Normalizing locally..."

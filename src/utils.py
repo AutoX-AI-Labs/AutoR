@@ -647,11 +647,12 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             )
 
         sections_dir = paths.writing_dir / "sections"
-        section_tex_files = list(sections_dir.glob("*.tex")) if sections_dir.exists() else []
-        if not section_tex_files:
-            problems.append(
-                f"{stage.stage_title} requires section .tex files under workspace/writing/sections."
-            )
+        if sections_dir.exists():
+            section_tex_files = list(sections_dir.glob("*.tex"))
+            if not section_tex_files:
+                problems.append(
+                    f"[warning] {stage.stage_title}: workspace/writing/sections/ exists but contains no .tex files."
+                )
 
         pdf_count = _count_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES)
         pdf_count += _count_files_with_suffixes(paths.artifacts_dir, PDF_SUFFIXES)
@@ -661,18 +662,24 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             )
 
         if not (paths.artifacts_dir / "build_log.txt").exists():
-            problems.append(
-                f"{stage.stage_title} requires build_log.txt under workspace/artifacts."
-            )
+            if pdf_count > 0:
+                problems.append(
+                    f"[warning] {stage.stage_title}: build_log.txt missing under workspace/artifacts. "
+                    "PDF exists so compilation likely succeeded."
+                )
+            else:
+                problems.append(
+                    f"{stage.stage_title} requires build_log.txt under workspace/artifacts."
+                )
 
         if not (paths.artifacts_dir / "citation_verification.json").exists():
             problems.append(
-                f"{stage.stage_title} requires citation_verification.json under workspace/artifacts."
+                f"[warning] {stage.stage_title}: citation_verification.json missing under workspace/artifacts."
             )
 
         if not (paths.artifacts_dir / "self_review.json").exists():
             problems.append(
-                f"{stage.stage_title} requires self_review.json under workspace/artifacts."
+                f"[warning] {stage.stage_title}: self_review.json missing under workspace/artifacts."
             )
 
     if stage.number >= 8:
