@@ -1,7 +1,5 @@
-# AutoR
-
 <p align="center">
-  <strong>Human-Centered AI Research Co-pilot</strong>
+  <strong>AutoR: Human-Centered AI Research Co-pilot</strong>
 </p>
 
 <p align="center">
