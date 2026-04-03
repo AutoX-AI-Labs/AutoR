@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from .artifact_index import format_artifact_index_for_prompt, write_artifact_index
+from .experiment_manifest import format_experiment_manifest_for_prompt, write_experiment_manifest
 from .manifest import (
     ensure_run_manifest,
     format_manifest_status,
@@ -155,6 +157,8 @@ class ResearchManager:
         initialize_memory(paths, user_goal)
         config = initialize_run_config(paths, model=self.operator.model, venue=venue)
         initialize_run_manifest(paths)
+        write_artifact_index(paths)
+        write_experiment_manifest(paths)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
         append_log_entry(
             paths.logs,
@@ -457,10 +461,16 @@ class ResearchManager:
                         package.summary,
                     )
                 write_stage_handoff(paths, stage, stage_markdown)
+                write_artifact_index(paths)
+                write_experiment_manifest(paths)
                 append_log_entry(
                     paths.logs,
                     f"{stage.slug} approved",
-                    "Stage approved and appended to memory.",
+                    (
+                        "Stage approved and appended to memory.\n"
+                        f"Updated artifact index: {paths.artifact_index}\n"
+                        f"Updated experiment manifest: {paths.experiment_manifest}"
+                    ),
                 )
                 self.ui.show_status(f"Approved {stage.stage_title}.", level="success")
                 return True
@@ -490,6 +500,23 @@ class ResearchManager:
             + format_venue_for_prompt(paths)
             + "\n"
         )
+        artifact_index = write_artifact_index(paths)
+        stage_template = (
+            stage_template.rstrip()
+            + "\n\n## Structured Artifact Index\n\n"
+            + f"Run-wide artifact index: `{paths.artifact_index.resolve()}`\n\n"
+            + format_artifact_index_for_prompt(artifact_index)
+            + "\n"
+        )
+        if stage.number >= 5:
+            experiment_manifest = write_experiment_manifest(paths)
+            stage_template = (
+                stage_template.rstrip()
+                + "\n\n## Experiment Bundle Manifest\n\n"
+                + f"Standard experiment manifest: `{paths.experiment_manifest.resolve()}`\n\n"
+                + format_experiment_manifest_for_prompt(experiment_manifest)
+                + "\n"
+            )
         if stage.slug == "07_writing":
             manifest = build_writing_manifest(paths)
             stage_template = (

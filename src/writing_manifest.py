@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from .artifact_index import indexed_artifacts_for_category, write_artifact_index
 from .utils import RunPaths
 
 
@@ -12,11 +13,13 @@ RESULT_SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".parquet", ".npz", ".npy"
 
 
 def build_writing_manifest(paths: RunPaths) -> dict[str, object]:
+    artifact_index = write_artifact_index(paths)
     manifest = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "figures": scan_figures(paths.figures_dir),
-        "result_files": scan_results(paths.results_dir),
-        "data_files": _scan_dir(paths.data_dir),
+        "artifact_index_path": str(paths.artifact_index.relative_to(paths.run_root)),
+        "figures": indexed_artifacts_for_category(artifact_index, "figures"),
+        "result_files": indexed_artifacts_for_category(artifact_index, "results"),
+        "data_files": indexed_artifacts_for_category(artifact_index, "data"),
         "stage_summaries": _collect_stage_summaries(paths),
     }
 
@@ -65,20 +68,42 @@ def scan_results(results_dir: Path) -> list[dict[str, object]]:
 
 def format_manifest_for_prompt(manifest: dict[str, object]) -> str:
     parts: list[str] = []
+    artifact_index_path = manifest.get("artifact_index_path")
+    if isinstance(artifact_index_path, str) and artifact_index_path.strip():
+        parts.append(f"Artifact index: `{artifact_index_path}`")
 
     figures = manifest.get("figures", [])
     if isinstance(figures, list) and figures:
-        parts.append("### Available Figures")
+        parts.append("\n### Available Figures")
         for fig in figures:
             if isinstance(fig, dict):
-                parts.append(f"- `{fig['rel_path']}` ({fig['size_bytes']} bytes)")
+                line = f"- `{fig['rel_path']}` ({fig['size_bytes']} bytes)"
+                schema = _format_schema(fig.get("schema"))
+                if schema:
+                    line += f" | {schema}"
+                parts.append(line)
 
     result_files = manifest.get("result_files", [])
     if isinstance(result_files, list) and result_files:
         parts.append("\n### Available Result Files")
         for result in result_files:
             if isinstance(result, dict):
-                parts.append(f"- `{result['rel_path']}` (type: {result['type']})")
+                line = f"- `{result['rel_path']}` (type: {result.get('suffix', '').lstrip('.') or 'file'})"
+                schema = _format_schema(result.get("schema"))
+                if schema:
+                    line += f" | {schema}"
+                parts.append(line)
+
+    data_files = manifest.get("data_files", [])
+    if isinstance(data_files, list) and data_files:
+        parts.append("\n### Available Data Files")
+        for data_file in data_files:
+            if isinstance(data_file, dict):
+                line = f"- `{data_file['rel_path']}`"
+                schema = _format_schema(data_file.get("schema"))
+                if schema:
+                    line += f" | {schema}"
+                parts.append(line)
 
     stage_summaries = manifest.get("stage_summaries", {})
     if isinstance(stage_summaries, dict) and stage_summaries:
@@ -110,3 +135,25 @@ def _collect_stage_summaries(paths: RunPaths) -> dict[str, str]:
             if not stage_file.name.endswith(".tmp.md"):
                 summaries[stage_file.stem] = str(stage_file.relative_to(paths.run_root))
     return summaries
+
+
+def _format_schema(schema: object) -> str:
+    if not isinstance(schema, dict) or not schema:
+        return ""
+
+    pieces: list[str] = []
+    kind = str(schema.get("kind") or schema.get("source") or "").strip()
+    if kind:
+        pieces.append(kind)
+    if isinstance(schema.get("columns"), list) and schema["columns"]:
+        pieces.append("columns=" + ", ".join(str(item) for item in schema["columns"][:6]))
+    if isinstance(schema.get("keys"), list) and schema["keys"]:
+        pieces.append("keys=" + ", ".join(str(item) for item in schema["keys"][:6]))
+    if "row_count" in schema:
+        pieces.append(f"rows={schema['row_count']}")
+    if "item_count" in schema:
+        pieces.append(f"items={schema['item_count']}")
+    if "sidecar_path" in schema:
+        pieces.append(f"schema={schema['sidecar_path']}")
+
+    return ", ".join(pieces)

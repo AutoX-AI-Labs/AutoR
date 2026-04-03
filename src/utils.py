@@ -34,6 +34,7 @@ class RunPaths:
     memory: Path
     run_config: Path
     run_manifest: Path
+    artifact_index: Path
     logs: Path
     logs_raw: Path
     prompt_cache_dir: Path
@@ -45,6 +46,7 @@ class RunPaths:
     code_dir: Path
     data_dir: Path
     results_dir: Path
+    experiment_manifest: Path
     writing_dir: Path
     figures_dir: Path
     artifacts_dir: Path
@@ -153,6 +155,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         memory=run_root / "memory.md",
         run_config=run_root / "run_config.json",
         run_manifest=run_root / "run_manifest.json",
+        artifact_index=run_root / "artifact_index.json",
         logs=run_root / "logs.txt",
         logs_raw=run_root / "logs_raw.jsonl",
         prompt_cache_dir=run_root / "prompt_cache",
@@ -164,6 +167,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         code_dir=workspace_root / "code",
         data_dir=workspace_root / "data",
         results_dir=workspace_root / "results",
+        experiment_manifest=workspace_root / "results" / "experiment_manifest.json",
         writing_dir=workspace_root / "writing",
         figures_dir=workspace_root / "figures",
         artifacts_dir=workspace_root / "artifacts",
@@ -639,12 +643,15 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             problems.append(
                 f"{stage.stage_title} requires machine-readable result artifacts under workspace/results."
             )
-        elif stage.number == 5 and freshness_cutoff is not None and not _has_recent_files_with_suffixes(
-            paths.results_dir, RESULT_SUFFIXES, freshness_cutoff
-        ):
+        if not paths.experiment_manifest.exists():
             problems.append(
-                f"{stage.stage_title} requires result artifacts produced or updated during the current stage execution."
+                f"{stage.stage_title} requires experiment_manifest.json under workspace/results."
             )
+        else:
+            from .experiment_manifest import validate_experiment_manifest
+
+            for problem in validate_experiment_manifest(paths.experiment_manifest):
+                problems.append(f"{stage.stage_title}: {problem}")
 
     if stage.number >= 6:
         if _count_files_with_suffixes(paths.figures_dir, FIGURE_SUFFIXES) == 0:

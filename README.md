@@ -443,14 +443,89 @@ flowchart LR
     C --> D
 ```
 
-### File boundaries
+File boundaries:
 
-- [main.py](main.py): CLI entry point; starts new runs or resumes old ones
-- [src/manager.py](src/manager.py): owns the 8-stage loop, approval flow, repair flow, and stage continuation policy
-- [src/operator.py](src/operator.py): invokes Claude CLI, streams output, persists session IDs, resumes stage conversations, and falls back on resume failure
-- [src/utils.py](src/utils.py): stage metadata, run paths, prompt assembly, markdown validation, artifact validation, and venue resolution
-- [src/writing_manifest.py](src/writing_manifest.py): scans figures, results, data files, and stage summaries to generate Stage 07 writing context
-- [src/prompts/](src/prompts): one prompt template per stage
+- [main.py](main.py): CLI entry point. Starts a new run or resumes an existing run.
+- [src/manager.py](src/manager.py): Owns the 8-stage loop, approval flow, repair flow, resume, redo-stage logic, and stage-level continuation policy.
+- [src/operator.py](src/operator.py): Invokes Claude CLI, streams output live, persists stage session IDs, resumes the same stage conversation for refinement, and falls back to a fresh session if resume fails.
+- [src/utils.py](src/utils.py): Stage metadata, prompt assembly, run paths, markdown validation, and artifact validation.
+- [src/prompts/](src/prompts): Per-stage prompt templates.
+
+## 📂 Run Layout
+
+Each run contains `user_input.txt`, `memory.md`, `run_manifest.json`, `artifact_index.json`, `prompt_cache/`, `operator_state/`, `stages/`, `workspace/`, `logs.txt`, and `logs_raw.jsonl`. The substantive research payload lives in `workspace/`.
+
+```mermaid
+flowchart TD
+    A[workspace/] --> B[literature/]
+    A --> C[code/]
+    A --> D[data/]
+    A --> E[results/]
+    A --> F[writing/]
+    A --> G[figures/]
+    A --> H[artifacts/]
+    A --> I[notes/]
+    A --> J[reviews/]
+```
+
+Workspace directories:
+
+- `literature/`: papers, benchmark notes, survey tables, reading artifacts.
+- `code/`: runnable pipeline code, scripts, configs, and method implementations.
+- `data/`: machine-readable datasets, manifests, processed splits, caches, and loaders.
+- `results/`: machine-readable metrics, predictions, ablations, tables, and evaluation outputs.
+  AutoR also standardizes `results/experiment_manifest.json` as a machine-readable summary over result, code, and note artifacts for downstream analysis.
+- `writing/`: manuscript sources, LaTeX, section drafts, tables, and bibliography.
+- `figures/`: plots, diagrams, charts, and paper figures.
+- `artifacts/`: compiled PDFs and packaged deliverables.
+- `notes/`: temporary notes and setup material.
+- `reviews/`: critique notes, threat-to-validity notes, and readiness reviews.
+
+Other run state:
+
+- `memory.md`: approved cross-stage memory only.
+- `run_manifest.json`: machine-readable run and stage lifecycle state.
+- `artifact_index.json`: machine-readable index over `workspace/data`, `workspace/results`, and `workspace/figures`.
+- `prompt_cache/`: exact prompts used for stage attempts and repairs.
+- `operator_state/`: per-stage Claude session IDs.
+- `stages/`: draft and promoted stage summaries.
+- `logs.txt` and `logs_raw.jsonl`: workflow logs and raw Claude stream output.
+
+## ✅ Validation
+
+AutoR validates both the stage markdown and the stage artifacts.
+
+Required stage markdown shape:
+
+```md
+# Stage X: <name>
+
+## Objective
+## Previously Approved Stage Summaries
+## What I Did
+## Key Results
+## Files Produced
+## Suggestions for Refinement
+## Your Options
+```
+
+Additional markdown requirements:
+
+- Exactly 3 numbered refinement suggestions.
+- The fixed 6 user options.
+- No unfinished placeholders such as `[In progress]`, `[Pending]`, `[TODO]`, or `[TBD]`.
+- Concrete file paths in `Files Produced`.
+
+Artifact requirements by stage:
+
+- Stage 03+: machine-readable data under `workspace/data/`
+- Stage 05+: machine-readable results under `workspace/results/`
+- Stage 05+: `workspace/results/experiment_manifest.json` must exist and remain structurally valid
+- Stage 06+: figure files under `workspace/figures/`
+- Stage 07+: venue-aware conference or journal-style LaTeX sources plus a compiled PDF under `workspace/writing/` or `workspace/artifacts/`
+- Stage 08+: review and readiness artifacts under `workspace/reviews/`
+
+A run with only markdown notes does not pass validation.
 
 ## 📌 Scope
 
@@ -493,12 +568,16 @@ The most valuable next steps are the ones that make AutoR more like a real resea
 - **Frontend run browser**
   A lightweight UI for browsing runs, stages, logs, and artifacts, driven by the run directory itself.
 
-## 📝 Notes
-
-- `runs/` is gitignored.
-- AutoR controls workflow orchestration, not scientific truth.
-- Submission-grade output still depends on the environment, model quality, local tools, and available datasets.
-- Stage 07 venue support is intentionally lightweight metadata-driven packaging, not a promise of full official template compliance for every venue.
+- ~~Stage-local continuation sessions.~~ Keep one Claude conversation per stage, reuse it for `1/2/3/4` refinement, and fall back to a fresh session only when resume fails. This is now implemented in the operator and manager flow.
+- ~~Artifact-level validation for non-toy outputs.~~ Enforce machine-readable data, result files, figures, LaTeX sources, PDF output, and review artifacts at the right stages. This is now part of the workflow validation path.
+- Cross-stage rollback and invalidation. When a later stage reveals that an earlier design decision is wrong, the workflow should be able to jump back to an earlier stage and mark downstream stages as stale. This is the biggest current control-flow gap.
+- Machine-readable run manifest. Add a single source of truth such as `run_manifest.json` to track stage status, approval state, stale dependencies, session IDs, and key artifact pointers. This should make both automation and future UI work much cleaner.
+- Continuation handoff compression. Add a short machine-generated stage handoff file that summarizes what is already correct, what is missing, and which files matter most. This should reduce context growth and make continuation more stable over long runs.
+- ~~Result schema and artifact indexing.~~ Standardize `workspace/data/`, `workspace/results/`, and `workspace/figures/` around explicit schemas and generate an artifact index automatically. The workflow now writes `artifact_index.json`, carries basic inferred or declared schema metadata, and feeds the index into later-stage prompt context and the writing manifest.
+- Writing pipeline hardening. Turn Stage 07 into a reliable manuscript production pipeline with stable conference and journal-style paper structures, bibliography handling, table and figure inclusion, and reproducible PDF compilation. The goal is a submission-ready paper package, not just writing notes.
+- Review and dissemination package. Expand Stage 08 so it produces readiness checklists, threats-to-validity notes, artifact manifests, release notes, and external-facing research bundles. The final stage should feel like packaging a paper for real release, not just wrapping up text.
+- Frontend run dashboard. Build a lightweight UI that can browse runs, stage status, summaries, logs, artifacts, and validation failures. It should read from the run directory and manifest rather than introducing a database first.
+- README and open-source assets. Keep refining the README and add `assets/` images such as workflow diagrams, UI screenshots, and artifact examples. This is important for open-source clarity, onboarding, and project presentation.
 
 ## 🌍 Community
 
