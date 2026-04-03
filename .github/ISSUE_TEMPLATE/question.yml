@@ -1,0 +1,52 @@
+name: Usage Question
+description: Ask a concrete setup, workflow, or behavior question about using AutoR.
+title: "[Question] "
+labels:
+  - question
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For faster answers, please keep the question concrete and include the command or run state you are asking about.
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - setup / installation
+        - CLI usage
+        - resume / redo-stage behavior
+        - stage outputs / artifacts
+        - writing / venue packaging
+        - terminal UI
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command Or Action
+      description: Optional, but helpful if your question is about a specific run.
+      placeholder: python main.py --resume-run latest --redo-stage 03
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant Context
+      description: Add any details that would help someone answer correctly.
+      placeholder: |
+        - fake operator or real Claude run
+        - run id
+        - stage number
+        - what you already tried
+
