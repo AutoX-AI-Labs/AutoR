@@ -1,10 +1,23 @@
 from __future__ import annotations
 
+from datetime import datetime
 import shutil
 import sys
 from pathlib import Path
 from typing import TextIO
 
+from .manifest import (
+    ensure_run_manifest,
+    format_manifest_status,
+    initialize_run_manifest,
+    load_run_manifest,
+    mark_stage_approved_manifest,
+    mark_stage_failed_manifest,
+    mark_stage_human_review_manifest,
+    mark_stage_running_manifest,
+    sync_stage_session_id,
+    update_manifest_run_status,
+)
 from .operator import ClaudeOperator
 from .terminal_ui import TerminalUI
 from .writing_manifest import build_writing_manifest, format_manifest_for_prompt
@@ -69,6 +82,7 @@ class ResearchManager:
         paths = build_run_paths(run_root)
         ensure_run_layout(paths)
         config = ensure_run_config(paths, model=self.operator.model, venue=venue)
+        ensure_run_manifest(paths)
         if not paths.user_input.exists():
             raise FileNotFoundError(f"Missing user_input.txt in run: {run_root}")
         if not paths.memory.exists():
@@ -92,27 +106,35 @@ class ResearchManager:
         return self._run_from_paths(paths, start_stage=start_stage)
 
     def _run_from_paths(self, paths: RunPaths, start_stage: StageSpec | None = None) -> bool:
-        previous_redo_start = self._redo_start_stage
-        self._redo_start_stage = start_stage
-        try:
-            stages_to_run = self._select_stages_for_run(paths, start_stage)
+        stages_to_run = self._select_stages_for_run(paths, start_stage)
 
-            for stage in stages_to_run:
-                approved = self._run_stage(paths, stage)
-                if not approved:
-                    append_log_entry(
-                        paths.logs,
-                        "run_aborted",
-                        f"Run aborted during {stage.stage_title}.",
-                    )
-                    self.ui.show_status("Run aborted.", level="warn")
-                    return False
+        for stage in stages_to_run:
+            approved = self._run_stage(paths, stage)
+            if not approved:
+                append_log_entry(
+                    paths.logs,
+                    "run_aborted",
+                    f"Run aborted during {stage.stage_title}.",
+                )
+                update_manifest_run_status(
+                    paths,
+                    run_status="cancelled",
+                    last_event="run.cancelled",
+                    current_stage_slug=stage.slug,
+                )
+                self._print("Run aborted.")
+                return False
 
-            append_log_entry(paths.logs, "run_complete", "All stages approved.")
-            self.ui.show_status("All stages approved. Run complete.", level="success")
-            return True
-        finally:
-            self._redo_start_stage = previous_redo_start
+        append_log_entry(paths.logs, "run_complete", "All stages approved.")
+        update_manifest_run_status(
+            paths,
+            run_status="completed",
+            last_event="run.completed",
+            current_stage_slug=None,
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        self._print("All stages approved. Run complete.")
+        return True
 
     def _create_run(self, user_goal: str, venue: str | None = None) -> RunPaths:
         run_root = create_run_root(self.runs_dir)
@@ -121,6 +143,7 @@ class ResearchManager:
         write_text(paths.user_input, user_goal)
         initialize_memory(paths, user_goal)
         config = initialize_run_config(paths, model=self.operator.model, venue=venue)
+        initialize_run_manifest(paths)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
         append_log_entry(
             paths.logs,
@@ -137,12 +160,11 @@ class ResearchManager:
         if start_stage is not None:
             return [stage for stage in STAGES if stage.number >= start_stage.number]
 
-        approved_memory = read_text(paths.memory)
-        approved_stage_ids = approved_stage_numbers(approved_memory)
+        manifest = ensure_run_manifest(paths)
         pending: list[StageSpec] = []
         for stage in STAGES:
-            final_stage_path = paths.stage_file(stage)
-            if final_stage_path.exists() and stage.number in approved_stage_ids:
+            entry = next(entry for entry in manifest.stages if entry.slug == stage.slug)
+            if entry.approved and entry.status == "approved":
                 continue
             pending.append(stage)
 
@@ -155,7 +177,8 @@ class ResearchManager:
         mark_stage_execution_started(paths, stage)
 
         while True:
-            self.ui.show_stage_start(stage.stage_title, attempt_no, continue_session)
+            mark_stage_running_manifest(paths, stage, attempt_no)
+            self._print(f"\nRunning {stage.stage_title} (attempt {attempt_no})...")
             prompt = self._build_stage_prompt(paths, stage, revision_feedback, continue_session)
             append_log_entry(
                 paths.logs,
@@ -170,6 +193,8 @@ class ResearchManager:
                 attempt_no,
                 continue_session=continue_session,
             )
+            if result.session_id:
+                sync_stage_session_id(paths, stage, result.session_id)
             append_log_entry(
                 paths.logs,
                 f"{stage.slug} attempt {attempt_no} result",
@@ -219,6 +244,7 @@ class ResearchManager:
                 result = repair_result
 
             if not result.stage_file_path.exists():
+                mark_stage_failed_manifest(paths, stage, "stage_summary_missing")
                 fallback_text = "\n\n".join(
                     part for part in [result.stdout, result.stderr] if part
                 )
@@ -233,9 +259,9 @@ class ResearchManager:
             stage_markdown = read_text(result.stage_file_path)
             validation_errors = validate_stage_markdown(stage_markdown, stage=stage, paths=paths) + validate_stage_artifacts(stage, paths)
             if validation_errors:
-                self.ui.show_status(
-                    f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt...",
-                    level="warn",
+                mark_stage_failed_manifest(paths, stage, "; ".join(validation_errors))
+                self._print(
+                    f"Stage summary for {stage.stage_title} was incomplete. Running repair attempt..."
                 )
                 append_log_entry(
                     paths.logs,
@@ -330,7 +356,24 @@ class ResearchManager:
 
                 result = repair_result
 
-            stage_markdown = read_text(result.stage_file_path)
+            final_stage_path = paths.stage_file(stage)
+            shutil.copyfile(result.stage_file_path, final_stage_path)
+            append_log_entry(
+                paths.logs,
+                f"{stage.slug} attempt {attempt_no} promoted",
+                (
+                    "Promoted validated stage summary draft to final stage file.\n"
+                    f"draft: {result.stage_file_path}\n"
+                    f"final: {final_stage_path}"
+                ),
+            )
+            stage_markdown = read_text(final_stage_path)
+            mark_stage_human_review_manifest(
+                paths,
+                stage,
+                attempt_no,
+                self._stage_file_paths(stage_markdown),
+            )
 
             suggestions = parse_refinement_suggestions(stage_markdown)
             self._display_stage_output(stage, stage_markdown)
@@ -382,6 +425,12 @@ class ResearchManager:
                     ),
                 )
                 append_approved_stage_summary(paths.memory, stage, stage_markdown)
+                mark_stage_approved_manifest(
+                    paths,
+                    stage,
+                    attempt_no,
+                    self._stage_file_paths(stage_markdown),
+                )
                 append_log_entry(
                     paths.logs,
                     f"{stage.slug} approved",
@@ -391,6 +440,12 @@ class ResearchManager:
                 return True
 
             if choice == "6":
+                update_manifest_run_status(
+                    paths,
+                    run_status="cancelled",
+                    last_event="run.cancelled",
+                    current_stage_slug=stage.slug,
+                )
                 return False
 
     def _build_stage_prompt(
@@ -470,6 +525,19 @@ class ResearchManager:
             level="warn",
         )
         return type("FallbackResult", (), {"stage_file_path": draft_path, "stdout": fallback_text, "stderr": ""})()
+
+    def describe_run_status(self, run_root: Path) -> str:
+        paths = build_run_paths(run_root)
+        ensure_run_layout(paths)
+        manifest = load_run_manifest(paths.run_manifest)
+        if manifest is None:
+            raise RuntimeError(f"Could not load run manifest from {paths.run_manifest}")
+        return format_manifest_status(manifest)
+
+    def _stage_file_paths(self, stage_markdown: str) -> list[str]:
+        from .utils import extract_path_references
+
+        return extract_path_references(stage_markdown)
 
     def _print(self, text: str) -> None:
         self.ui.write(text.rstrip() + "\n")
