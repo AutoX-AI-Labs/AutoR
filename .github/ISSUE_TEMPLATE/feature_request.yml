@@ -1,0 +1,79 @@
+name: Feature Request
+description: Suggest a focused improvement that fits AutoR's research workflow scope.
+title: "[Feature] "
+labels:
+  - enhancement
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep requests aligned with AutoR's current product shape:
+        terminal-first, file-based, human-in-the-loop, and oriented around real research artifacts.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - workflow / manager
+        - operator / Claude CLI integration
+        - validation / artifact gating
+        - terminal UI
+        - writing / venue packaging
+        - developer experience / testing
+        - documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What concrete limitation are you hitting today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Change
+      description: Describe the smallest useful version of the change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: fit
+    attributes:
+      label: Why This Fits AutoR
+      description: Explain why this improves the current workflow instead of turning AutoR into a generic platform.
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Expected User-Or Artifact-Level Outcome
+      description: What should be materially better after this is implemented?
+      placeholder: |
+        - clearer stage approval loop
+        - stronger stage 07 validation
+        - less stale artifact leakage on redo-stage
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Optional, but useful if you evaluated other approaches.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: This request is scoped as a concrete improvement, not a vague wishlist item.
+          required: true
+

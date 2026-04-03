@@ -106,6 +106,8 @@ FIXED_STAGE_OPTIONS = [
     "6. Abort",
 ]
 
+APPROVED_STAGE_ENTRY_PATTERN = re.compile(r"^#{1,6}\s*Stage\s+(\d{2}):.*$", flags=re.MULTILINE)
+
 DEFAULT_REFINEMENT_SUGGESTIONS = [
     "Tighten the scope or decision criteria for this stage before continuing.",
     "Strengthen the evidence quality, artifacts, or justification produced in this stage.",
@@ -223,14 +225,7 @@ def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def initialize_memory(paths: RunPaths, user_goal: str) -> None:
-    memory = (
-        "# Approved Run Memory\n\n"
-        "## Original User Goal\n"
-        f"{user_goal.strip()}\n\n"
-        "## Approved Stage Summaries\n\n"
-        "_None yet._\n"
-    )
-    write_text(paths.memory, memory)
+    write_text(paths.memory, build_memory_text(user_goal, []))
 
 
 def initialize_run_config(paths: RunPaths, model: str, venue: str | None = None) -> dict[str, Any]:
@@ -258,10 +253,14 @@ def load_run_config(paths: RunPaths) -> dict[str, Any]:
 
     model = payload.get("model")
     venue = payload.get("venue")
-    return {
+    config = {
         "model": model if isinstance(model, str) and model.strip() else "unknown",
         "venue": resolve_venue_key(venue if isinstance(venue, str) else None),
     }
+    created_at = payload.get("created_at")
+    if isinstance(created_at, str) and created_at.strip():
+        config["created_at"] = created_at
+    return config
 
 
 def save_run_config(paths: RunPaths, config: dict[str, Any]) -> None:
@@ -425,6 +424,7 @@ def build_continuation_prompt(
     stage: StageSpec,
     stage_template: str,
     paths: RunPaths,
+    approved_memory: str,
     revision_feedback: str | None,
 ) -> str:
     current_draft = paths.stage_tmp_file(stage)
@@ -449,7 +449,7 @@ def build_continuation_prompt(
         (
             f"1. Read the current draft at `{current_draft.resolve()}` if it exists.\n"
             f"2. Read the last promoted stage summary at `{current_final.resolve()}` if it exists.\n"
-            f"3. Read approved memory from `{paths.memory.resolve()}` and the original user goal from `{paths.user_input.resolve()}` if needed.\n"
+            f"3. Read the original user goal from `{paths.user_input.resolve()}` if needed.\n"
             f"4. Treat workspace artifacts already under `{paths.workspace_root.resolve()}` as part of the current stage context and reuse them.\n"
             "5. Preserve all valid work already completed in this stage unless the new feedback requires changing it.\n"
             "6. Fill the missing pieces, fix weak points, and update the stage summary instead of throwing away correct work.\n"
@@ -457,6 +457,8 @@ def build_continuation_prompt(
             "8. Do not leave placeholder text such as [In progress], [Pending], [TODO], [TBD], or similar unfinished markers.\n"
             "9. If the existing stage work is partially correct, keep the correct parts and extend them rather than replacing them blindly."
         ),
+        "# Approved Memory",
+        approved_memory.strip() or "_None yet._",
         "# New Feedback",
         revision_feedback.strip()
         if revision_feedback
@@ -507,6 +509,15 @@ def parse_numbered_list(section_text: str) -> dict[int, str]:
     return items
 
 
+def parse_numbered_list_sequence(section_text: str) -> list[int]:
+    sequence: list[int] = []
+    for raw_line in section_text.splitlines():
+        match = re.match(r"^\s*(\d+)\.\s+(.*)$", raw_line.rstrip())
+        if match:
+            sequence.append(int(match.group(1)))
+    return sequence
+
+
 def parse_refinement_suggestions(markdown: str) -> list[str]:
     section = extract_markdown_section(markdown, "Suggestions for Refinement")
     if section is None:
@@ -525,11 +536,19 @@ def contains_placeholder_text(text: str) -> bool:
     return any(re.search(pattern, lowered) for pattern in PLACEHOLDER_PATTERNS)
 
 
-def validate_stage_markdown(markdown: str) -> list[str]:
+def validate_stage_markdown(
+    markdown: str,
+    stage: StageSpec | None = None,
+    paths: RunPaths | None = None,
+) -> list[str]:
     problems: list[str] = []
 
+    lines = markdown.splitlines()
+    first_nonempty_line = next((line.strip() for line in lines if line.strip()), "")
     if not markdown.startswith("# Stage "):
         problems.append("Stage markdown must begin with '# Stage '.")
+    elif stage is not None and first_nonempty_line != f"# {stage.stage_title}":
+        problems.append(f"Stage markdown title must be exactly '# {stage.stage_title}'.")
 
     for heading in REQUIRED_STAGE_HEADINGS:
         section = extract_markdown_section(markdown, heading)
@@ -544,14 +563,39 @@ def validate_stage_markdown(markdown: str) -> list[str]:
             listed_files = _extract_path_references(section)
             if not listed_files:
                 problems.append("Section 'Files Produced' must list at least one concrete file path.")
+            elif paths is not None:
+                missing_files = [
+                    file_ref
+                    for file_ref in listed_files
+                    if not _listed_file_exists(paths.run_root, file_ref)
+                ]
+                if missing_files:
+                    problems.append(
+                        "Section 'Files Produced' references missing file(s): "
+                        + ", ".join(f"`{path}`" for path in missing_files)
+                    )
 
     options_section = extract_markdown_section(markdown, "Your Options")
     if options_section is not None:
+        option_sequence = parse_numbered_list_sequence(options_section)
+        if option_sequence != [1, 2, 3, 4, 5, 6]:
+            problems.append("Section 'Your Options' must contain exactly options 1-6 in order with no extras.")
         option_items = parse_numbered_list(options_section)
         for number in range(1, 7):
             if number not in option_items:
                 problems.append(f"Missing option {number} in 'Your Options'.")
+                continue
+            expected_text = FIXED_STAGE_OPTIONS[number - 1].split(". ", 1)[1]
+            if option_items[number] != expected_text:
+                problems.append(f"Option {number} in 'Your Options' must be exactly '{expected_text}'.")
 
+    suggestions_section = extract_markdown_section(markdown, "Suggestions for Refinement")
+    if suggestions_section is not None:
+        suggestion_sequence = parse_numbered_list_sequence(suggestions_section)
+        if suggestion_sequence != [1, 2, 3]:
+            problems.append(
+                "Section 'Suggestions for Refinement' must contain exactly suggestions 1-3 in order with no extras."
+            )
     try:
         suggestions = parse_refinement_suggestions(markdown)
         if len(suggestions) != 3:
@@ -569,11 +613,18 @@ def validate_stage_markdown(markdown: str) -> list[str]:
 
 def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
     problems: list[str] = []
+    freshness_cutoff = stage_execution_started_at(paths, stage)
 
     if stage.number >= 3:
         if _count_files_with_suffixes(paths.data_dir, MACHINE_DATA_SUFFIXES) == 0:
             problems.append(
                 f"{stage.stage_title} requires machine-readable data artifacts under workspace/data, not only markdown notes."
+            )
+        elif stage.number == 3 and freshness_cutoff is not None and not _has_recent_files_with_suffixes(
+            paths.data_dir, MACHINE_DATA_SUFFIXES, freshness_cutoff
+        ):
+            problems.append(
+                f"{stage.stage_title} requires machine-readable data artifacts produced or updated during the current stage execution."
             )
 
     if stage.number >= 5:
@@ -581,11 +632,23 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             problems.append(
                 f"{stage.stage_title} requires machine-readable result artifacts under workspace/results."
             )
+        elif stage.number == 5 and freshness_cutoff is not None and not _has_recent_files_with_suffixes(
+            paths.results_dir, RESULT_SUFFIXES, freshness_cutoff
+        ):
+            problems.append(
+                f"{stage.stage_title} requires result artifacts produced or updated during the current stage execution."
+            )
 
     if stage.number >= 6:
         if _count_files_with_suffixes(paths.figures_dir, FIGURE_SUFFIXES) == 0:
             problems.append(
                 f"{stage.stage_title} requires figure artifacts under workspace/figures."
+            )
+        elif stage.number == 6 and freshness_cutoff is not None and not _has_recent_files_with_suffixes(
+            paths.figures_dir, FIGURE_SUFFIXES, freshness_cutoff
+        ):
+            problems.append(
+                f"{stage.stage_title} requires figures produced or updated during the current stage execution."
             )
 
     if stage.number >= 7:
@@ -635,11 +698,38 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
                 f"{stage.stage_title} requires self_review.json under workspace/artifacts."
             )
 
+        if stage.number == 7 and freshness_cutoff is not None:
+            stage7_required_files = [
+                main_tex,
+                paths.artifacts_dir / "build_log.txt",
+                paths.artifacts_dir / "citation_verification.json",
+                paths.artifacts_dir / "self_review.json",
+            ]
+            if not all(path.exists() and path.stat().st_mtime >= freshness_cutoff for path in stage7_required_files):
+                problems.append(
+                    f"{stage.stage_title} requires the writing package and build metadata to be produced or updated during the current stage execution."
+                )
+            if not _has_recent_files_with_suffixes(paths.writing_dir, PDF_SUFFIXES, freshness_cutoff) and not _has_recent_files_with_suffixes(
+                paths.artifacts_dir, PDF_SUFFIXES, freshness_cutoff
+            ):
+                problems.append(
+                    f"{stage.stage_title} requires a manuscript PDF produced or updated during the current stage execution."
+                )
+            sections_dir = paths.writing_dir / "sections"
+            if not _has_recent_files_with_suffixes(sections_dir, LATEX_SUFFIXES, freshness_cutoff):
+                problems.append(
+                    f"{stage.stage_title} requires section .tex files produced or updated during the current stage execution."
+                )
+
     if stage.number >= 8:
         review_files = _existing_files(paths.reviews_dir)
         if not review_files:
             problems.append(
                 f"{stage.stage_title} requires review/readiness artifacts under workspace/reviews."
+            )
+        elif freshness_cutoff is not None and not any(path.stat().st_mtime >= freshness_cutoff for path in review_files):
+            problems.append(
+                f"{stage.stage_title} requires review/readiness artifacts produced or updated during the current stage execution."
             )
 
     return problems
@@ -664,17 +754,60 @@ def render_approved_stage_entry(stage: StageSpec, stage_markdown: str) -> str:
     )
 
 
+def build_memory_text(user_goal: str, approved_entries: list[str]) -> str:
+    approved_block = "\n\n".join(entry.strip() for entry in approved_entries if entry.strip())
+    if not approved_block:
+        approved_block = "_None yet._"
+    return (
+        "# Approved Run Memory\n\n"
+        "## Original User Goal\n"
+        f"{(user_goal or '').strip()}\n\n"
+        "## Approved Stage Summaries\n\n"
+        f"{approved_block}\n"
+    )
+
+
+def approved_stage_entries(memory_text: str) -> list[tuple[int, str]]:
+    summaries = approved_stage_summaries(memory_text)
+    if summaries == "None yet.":
+        return []
+
+    matches = list(APPROVED_STAGE_ENTRY_PATTERN.finditer(summaries))
+    if not matches:
+        return []
+
+    entries: list[tuple[int, str]] = []
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(summaries)
+        entries.append((int(match.group(1)), summaries[start:end].strip()))
+    return entries
+
+
+def approved_stage_numbers(memory_text: str) -> set[int]:
+    return {number for number, _ in approved_stage_entries(memory_text)}
+
+
+def filtered_approved_memory(memory_text: str, max_stage_number: int) -> str:
+    user_goal = extract_markdown_section(memory_text, "Original User Goal") or ""
+    kept_entries = [
+        entry
+        for number, entry in approved_stage_entries(memory_text)
+        if number <= max_stage_number
+    ]
+    return build_memory_text(user_goal, kept_entries)
+
+
 def append_approved_stage_summary(memory_path: Path, stage: StageSpec, stage_markdown: str) -> None:
     current = read_text(memory_path)
-    entry = render_approved_stage_entry(stage, stage_markdown)
-
-    placeholder = "_None yet._"
-    if placeholder in current:
-        updated = current.replace(placeholder, entry, 1)
-    else:
-        updated = current.rstrip() + "\n\n" + entry + "\n"
-
-    write_text(memory_path, updated)
+    user_goal = extract_markdown_section(current, "Original User Goal") or ""
+    retained_entries = [
+        entry
+        for number, entry in approved_stage_entries(current)
+        if number < stage.number
+    ]
+    retained_entries.append(render_approved_stage_entry(stage, stage_markdown))
+    write_text(memory_path, build_memory_text(user_goal, retained_entries))
 
 
 def approved_stage_summaries(memory_text: str) -> str:
@@ -749,6 +882,17 @@ def _extract_path_references(text: str) -> list[str]:
     return paths
 
 
+def _listed_file_exists(run_root: Path, listed_path: str) -> bool:
+    candidate = Path(listed_path)
+    if not candidate.is_absolute():
+        candidate = run_root / candidate
+    try:
+        candidate.resolve().relative_to(run_root.resolve())
+    except ValueError:
+        return candidate.exists()
+    return candidate.exists()
+
+
 def _existing_files(directory: Path) -> list[Path]:
     if not directory.exists():
         return []
@@ -757,6 +901,13 @@ def _existing_files(directory: Path) -> list[Path]:
 
 def _count_files_with_suffixes(directory: Path, suffixes: set[str]) -> int:
     return sum(1 for path in _existing_files(directory) if path.suffix.lower() in suffixes)
+
+
+def _has_recent_files_with_suffixes(directory: Path, suffixes: set[str], cutoff_timestamp: float) -> bool:
+    return any(
+        path.suffix.lower() in suffixes and path.stat().st_mtime >= cutoff_timestamp
+        for path in _existing_files(directory)
+    )
 
 
 def _count_non_markdown_files(directory: Path) -> int:
@@ -840,6 +991,17 @@ def resolve_venue_key(value: str | None) -> str:
             return venue_id
 
     raise ValueError(f"Unknown venue: {value}")
+
+
+def mark_stage_execution_started(paths: RunPaths, stage: StageSpec) -> None:
+    write_text(paths.stage_execution_marker_file(stage), datetime.now().isoformat(timespec="seconds"))
+
+
+def stage_execution_started_at(paths: RunPaths, stage: StageSpec) -> float | None:
+    marker = paths.stage_execution_marker_file(stage)
+    if not marker.exists():
+        return None
+    return marker.stat().st_mtime
 
 
 def _markers_for_venue(venue_key: str) -> set[str]:

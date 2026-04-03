@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.manager import ResearchManager
 from src.operator import ClaudeOperator
+from src.terminal_ui import TerminalUI
 from src.utils import (
     DEFAULT_VENUE,
     STAGES,
@@ -118,6 +119,8 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
     runs_dir = repo_root / args.runs_dir
+    ui = TerminalUI()
+    ui.show_banner()
 
     if args.resume_run:
         start_stage = resolve_stage(args.redo_stage)
@@ -130,26 +133,27 @@ def main() -> int:
         existing_model = existing_config.get("model")
         model = args.model or (existing_model if existing_model != "unknown" else None) or "sonnet"
         venue = resolve_venue_key(args.venue or existing_config["venue"])
-        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator)
+        operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
         manager = ResearchManager(
             project_root=repo_root,
             runs_dir=runs_dir,
             operator=operator,
+            ui=ui,
         )
         manager.resume_run(run_root, start_stage=start_stage or rollback_stage, venue=venue, rollback_stage=rollback_stage)
         return 0
 
     model = args.model or "sonnet"
     venue = resolve_venue_key(args.venue or DEFAULT_VENUE)
-    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator)
+    operator = ClaudeOperator(model=model, fake_mode=args.fake_operator, ui=ui)
     manager = ResearchManager(
         project_root=repo_root,
         runs_dir=runs_dir,
         operator=operator,
+        ui=ui,
     )
     goal = args.goal.strip() if args.goal else read_user_goal()
-    manager.run(goal, venue=venue)
-    return 0
+    return 0 if manager.run(goal, venue=venue) else 1
 
 
 if __name__ == "__main__":
