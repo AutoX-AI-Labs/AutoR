@@ -1,11 +1,12 @@
 <h1 align="center">AutoR: Accelerating the AI Research Loop with Human-in-the-Loop Co-pilot </h1>
 
 <p align="center">
-  A terminal-first, file-based research workflow runner for long-form AI-assisted research.
-  <br />
-  It drives a fixed 8-stage research pipeline, requires human approval after every stage,
-  and writes every prompt, log, summary, and artifact into an isolated run directory.
+<b>AI handles the execution load. Humans steer the research direction.</b>
+<br />
+A terminal-first, 8-stage pipeline that turns high-level goals into verifiable, venue-ready papers.
 </p>
+
+
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue" alt="Python 3.10+" />
@@ -38,6 +39,7 @@
 <p align="center">
   <img src="assets/examples/example_fig6_two_layer.png" alt="AutoR example figure" width="92%" />
 </p>
+
 
 > AutoR is not a chat demo, not a generic agent framework, and not a markdown-only research toy.
 >
