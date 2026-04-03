@@ -20,6 +20,7 @@ Interpret the available evidence rigorously and determine what claims the curren
 - Put analysis notes, evaluation breakdowns, and interpretive documents under `{{WORKSPACE_RESULTS_DIR}}` or `{{WORKSPACE_NOTES_DIR}}`.
 - Put figures, plots, or tables created for interpretation under `{{WORKSPACE_FIGURES_DIR}}` or `{{WORKSPACE_RESULTS_DIR}}`.
 - Create real figure files (`.png`, `.pdf`, `.svg`, `.jpg`) under `{{WORKSPACE_FIGURES_DIR}}`; textual descriptions of figures are not sufficient.
+- Read `{{WORKSPACE_RESULTS_DIR}}/experiment_manifest.json` before drawing conclusions so analysis tracks the actual standardized experiment bundle.
 - The stage summary draft for the current attempt must be written to `{{STAGE_OUTPUT_PATH}}`.
 - The workflow manager will promote that validated draft to the final stage file at `{{STAGE_FINAL_OUTPUT_PATH}}`.
 

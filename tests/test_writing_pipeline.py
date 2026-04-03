@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.experiment_manifest import write_experiment_manifest
 from src.utils import (
     DEFAULT_VENUE,
     STAGES,
@@ -41,6 +42,7 @@ class WritingPipelineTests(unittest.TestCase):
         return run_root, paths
 
     def _populate_valid_stage07_outputs(self, paths: object) -> None:
+        write_experiment_manifest(paths)
         sections_dir = paths.writing_dir / "sections"
         sections_dir.mkdir(parents=True, exist_ok=True)
 

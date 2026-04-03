@@ -329,6 +329,7 @@ Workspace directories:
 - `code/`: runnable pipeline code, scripts, configs, and method implementations.
 - `data/`: machine-readable datasets, manifests, processed splits, caches, and loaders.
 - `results/`: machine-readable metrics, predictions, ablations, tables, and evaluation outputs.
+  AutoR also standardizes `results/experiment_manifest.json` as a machine-readable summary over result, code, and note artifacts for downstream analysis.
 - `writing/`: manuscript sources, LaTeX, section drafts, tables, and bibliography.
 - `figures/`: plots, diagrams, charts, and paper figures.
 - `artifacts/`: compiled PDFs and packaged deliverables.
@@ -374,6 +375,7 @@ Artifact requirements by stage:
 
 - Stage 03+: machine-readable data under `workspace/data/`
 - Stage 05+: machine-readable results under `workspace/results/`
+- Stage 05+: `workspace/results/experiment_manifest.json` must exist and remain structurally valid
 - Stage 06+: figure files under `workspace/figures/`
 - Stage 07+: venue-aware conference or journal-style LaTeX sources plus a compiled PDF under `workspace/writing/` or `workspace/artifacts/`
 - Stage 08+: review and readiness artifacts under `workspace/reviews/`

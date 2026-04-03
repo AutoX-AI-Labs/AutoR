@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .artifact_index import format_artifact_index_for_prompt, write_artifact_index
+from .experiment_manifest import format_experiment_manifest_for_prompt, write_experiment_manifest
 from .manifest import (
     ensure_run_manifest,
     format_manifest_status,
@@ -146,6 +147,7 @@ class ResearchManager:
         config = initialize_run_config(paths, model=self.operator.model, venue=venue)
         initialize_run_manifest(paths)
         write_artifact_index(paths)
+        write_experiment_manifest(paths)
         append_log_entry(paths.logs, "run_start", f"Run root: {paths.run_root}")
         append_log_entry(
             paths.logs,
@@ -421,10 +423,15 @@ class ResearchManager:
                 )
                 write_stage_handoff(paths, stage, stage_markdown)
                 write_artifact_index(paths)
+                write_experiment_manifest(paths)
                 append_log_entry(
                     paths.logs,
                     f"{stage.slug} approved",
-                    f"Stage approved and appended to memory.\nUpdated artifact index: {paths.artifact_index}",
+                    (
+                        "Stage approved and appended to memory.\n"
+                        f"Updated artifact index: {paths.artifact_index}\n"
+                        f"Updated experiment manifest: {paths.experiment_manifest}"
+                    ),
                 )
                 self._print(f"Approved {stage.stage_title}.")
                 return True
@@ -462,6 +469,15 @@ class ResearchManager:
             + format_artifact_index_for_prompt(artifact_index)
             + "\n"
         )
+        if stage.number >= 5:
+            experiment_manifest = write_experiment_manifest(paths)
+            stage_template = (
+                stage_template.rstrip()
+                + "\n\n## Experiment Bundle Manifest\n\n"
+                + f"Standard experiment manifest: `{paths.experiment_manifest.resolve()}`\n\n"
+                + format_experiment_manifest_for_prompt(experiment_manifest)
+                + "\n"
+            )
         if stage.slug == "07_writing":
             manifest = build_writing_manifest(paths)
             stage_template = (

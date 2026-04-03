@@ -158,6 +158,8 @@ def _scan_artifacts(paths: RunPaths) -> list[ArtifactRecord]:
                 continue
             if path.name.endswith(".schema.json"):
                 continue
+            if category == "results" and path.name == "experiment_manifest.json":
+                continue
             stat = path.stat()
             records.append(
                 ArtifactRecord(

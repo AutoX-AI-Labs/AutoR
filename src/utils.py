@@ -46,6 +46,7 @@ class RunPaths:
     code_dir: Path
     data_dir: Path
     results_dir: Path
+    experiment_manifest: Path
     writing_dir: Path
     figures_dir: Path
     artifacts_dir: Path
@@ -164,6 +165,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         code_dir=workspace_root / "code",
         data_dir=workspace_root / "data",
         results_dir=workspace_root / "results",
+        experiment_manifest=workspace_root / "results" / "experiment_manifest.json",
         writing_dir=workspace_root / "writing",
         figures_dir=workspace_root / "figures",
         artifacts_dir=workspace_root / "artifacts",
@@ -593,6 +595,15 @@ def validate_stage_artifacts(stage: StageSpec, paths: RunPaths) -> list[str]:
             problems.append(
                 f"{stage.stage_title} requires machine-readable result artifacts under workspace/results."
             )
+        if not paths.experiment_manifest.exists():
+            problems.append(
+                f"{stage.stage_title} requires experiment_manifest.json under workspace/results."
+            )
+        else:
+            from .experiment_manifest import validate_experiment_manifest
+
+            for problem in validate_experiment_manifest(paths.experiment_manifest):
+                problems.append(f"{stage.stage_title}: {problem}")
 
     if stage.number >= 6:
         if _count_files_with_suffixes(paths.figures_dir, FIGURE_SUFFIXES) == 0:
