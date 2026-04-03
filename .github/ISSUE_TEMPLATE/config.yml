@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: README and Quick Start
+    url: https://github.com/AutoX-AI-Labs/AutoR#quick-start
+    about: Check the README first for setup, workflow, and example-run details.
+

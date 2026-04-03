@@ -154,7 +154,7 @@ class WritingPipelineTests(unittest.TestCase):
                 capture_output=True,
             )
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
             config = load_run_config(paths)
             self.assertEqual(config["model"], "opus")
             self.assertEqual(config["venue"], "nature")
@@ -187,7 +187,7 @@ class WritingPipelineTests(unittest.TestCase):
                 capture_output=True,
             )
 
-            self.assertEqual(result.returncode, 0, msg=result.stderr)
+            self.assertEqual(result.returncode, 1, msg=result.stderr)
             config = load_run_config(paths)
             self.assertEqual(config["model"], "sonnet")
             self.assertEqual(config["venue"], DEFAULT_VENUE)

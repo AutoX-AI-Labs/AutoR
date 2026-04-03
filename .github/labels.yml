@@ -1,0 +1,18 @@
+- name: needs-triage
+  color: d4c5f9
+  description: New issue that still needs maintainer triage.
+- name: area:workflow
+  color: 0e8a16
+  description: ResearchManager flow, stage loop, approval, resume, or redo-stage behavior.
+- name: area:operator
+  color: 1d76db
+  description: Claude CLI execution, sessions, prompt cache, streaming, or repair flow.
+- name: area:validation
+  color: b60205
+  description: Stage summary validation, artifact gating, freshness checks, or file contracts.
+- name: area:terminal-ui
+  color: fbca04
+  description: Terminal rendering, menus, banners, stream formatting, or TTY fallback behavior.
+- name: area:writing
+  color: 5319e7
+  description: Stage 07 writing flow, venue packaging, LaTeX, PDF, or review artifacts.

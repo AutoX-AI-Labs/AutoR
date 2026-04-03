@@ -1,0 +1,52 @@
+name: Documentation Issue
+description: Report missing, unclear, outdated, or misleading docs.
+title: "[Docs] "
+labels:
+  - documentation
+  - needs-triage
+body:
+  - type: dropdown
+    id: doc_area
+    attributes:
+      label: Documentation Area
+      options:
+        - README
+        - quick start / setup
+        - example run / artifacts
+        - CLI usage
+        - writing / venue behavior
+        - contribution workflow
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Page Or File
+      description: Which doc page, section, or file is affected?
+      placeholder: README.md#quick-start
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What Is Wrong Or Missing
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Fix
+      description: If you already know the better wording or structure, put it here.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked the latest README and existing issues first.
+          required: true
+
