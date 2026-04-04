@@ -73,6 +73,12 @@ def parse_args() -> argparse.Namespace:
         "--rollback-stage",
         help="When resuming a run, roll back to this stage and mark downstream stages stale before continuing.",
     )
+    parser.add_argument(
+        "--project-root",
+        metavar="PATH",
+        help="Path to an existing project repository. AutoR will scan it to infer "
+             "current project state and recommend a re-entry stage.",
+    )
     return parser.parse_args()
 
 
@@ -194,11 +200,14 @@ def main() -> int:
     if not skip_intake and sys.stdin.isatty():
         resources = collect_resource_paths_from_ui(ui, initial_resources=args.resources)
 
+    project_root_arg = Path(args.project_root).expanduser().resolve() if args.project_root else None
+
     return 0 if manager.run(
         goal,
         venue=venue,
         resources=resources or None,
         skip_intake=skip_intake,
+        project_root=project_root_arg,
     ) else 1
 
 

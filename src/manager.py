@@ -6,6 +6,14 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
+from .project_bootstrap import (
+    format_project_context_for_prompt,
+    format_project_scan_for_prompt,
+    format_scan_stats_for_log,
+    project_bootstrap_exists,
+    save_project_bootstrap,
+    scan_project,
+)
 from .intake import (
     IntakeContext,
     ResourceEntry,
@@ -59,6 +67,7 @@ from .utils import (
     mark_stage_execution_started,
     parse_refinement_suggestions,
     read_text,
+    required_stage_output_template,
     truncate_text,
     validate_stage_artifacts,
     validate_stage_markdown,
@@ -90,6 +99,7 @@ class ResearchManager:
         venue: str | None = None,
         resources: list[ResourceEntry] | None = None,
         skip_intake: bool = False,
+        project_root: Path | None = None,
     ) -> bool:
         paths = self._create_run(user_goal, venue=venue, resources=resources)
         self.ui.show_run_started(paths.run_root.as_posix(), self.operator.model, venue or "default")
@@ -102,7 +112,17 @@ class ResearchManager:
                 self.ui.show_status("Run aborted.", level="warn")
                 return False
 
-        return self._run_from_paths(paths)
+        # Run project repo bootstrap if provided
+        bootstrap_start_stage: StageSpec | None = None
+        if project_root is not None:
+            bootstrap_result = self._run_project_bootstrap(paths, project_root)
+            if bootstrap_result is None:
+                append_log_entry(paths.logs, "run_aborted", "Run aborted during project bootstrap.")
+                self.ui.show_status("Run aborted.", level="warn")
+                return False
+            bootstrap_start_stage = bootstrap_result
+
+        return self._run_from_paths(paths, start_stage=bootstrap_start_stage)
 
     def resume_run(
         self,
@@ -359,6 +379,195 @@ class ResearchManager:
         intake_text = format_intake_for_prompt(ctx)
         if intake_text:
             append_approved_stage_summary(paths.memory, INTAKE_STAGE, stage_markdown)
+
+    # ------------------------------------------------------------------
+    # Project repo bootstrap (scan existing repo → infer stage)
+    # ------------------------------------------------------------------
+
+    PROJECT_BOOTSTRAP_STAGE = StageSpec(number=-1, slug="project_bootstrap", display_name="Project Repo Bootstrap")
+
+    def _run_project_bootstrap(self, paths: RunPaths, project_root: Path) -> StageSpec | None:
+        """Scan an existing project repo and run Claude to infer project state.
+
+        Returns the recommended start StageSpec, or None if the user aborts.
+        """
+        stage = self.PROJECT_BOOTSTRAP_STAGE
+
+        if project_bootstrap_exists(paths):
+            self.ui.show_status("Project bootstrap already exists, skipping scan.", level="info")
+            from .project_bootstrap import load_recommended_entry_stage
+            entry = load_recommended_entry_stage(paths)
+            if entry is not None:
+                for s in STAGES:
+                    if s.number == entry:
+                        return s
+            return None
+
+        self.ui.show_status(f"Scanning project repo: {project_root}", level="info")
+        try:
+            scan_result = scan_project(project_root)
+        except (FileNotFoundError, NotADirectoryError) as exc:
+            self.ui.show_status(f"Project bootstrap error: {exc}", level="error")
+            return None
+
+        self.ui.show_status(
+            f"Scanned {scan_result.total_files} files. "
+            f"Code: {scan_result.code_state.status}, "
+            f"Experiments: {scan_result.experiment_state.status}, "
+            f"Writing: {scan_result.writing_state.status}. "
+            f"Heuristic entry: Stage {scan_result.recommended_entry_stage:02d}.",
+            level="info",
+        )
+        append_log_entry(paths.logs, "project_bootstrap_start", format_scan_stats_for_log(scan_result))
+
+        # Save heuristic results so Claude can read them
+        save_project_bootstrap(paths, scan_result)
+
+        scan_prompt_section = format_project_scan_for_prompt(scan_result)
+
+        attempt_no = 1
+        revision_feedback: str | None = None
+        continue_session = False
+
+        while True:
+            self.ui.show_stage_start(stage.stage_title, attempt_no, continue_session)
+            prompt = self._build_project_bootstrap_prompt(
+                paths, stage, scan_prompt_section, project_root, revision_feedback, continue_session,
+            )
+            append_log_entry(paths.logs, f"project_bootstrap attempt {attempt_no} prompt", prompt)
+
+            result = self.operator.run_stage(stage, prompt, paths, attempt_no, continue_session=continue_session)
+            append_log_entry(
+                paths.logs,
+                f"project_bootstrap attempt {attempt_no} result",
+                (
+                    f"success: {result.success}\n"
+                    f"session_id: {result.session_id or '(unknown)'}\n"
+                    f"stage_file_path: {result.stage_file_path}\n\n"
+                    "stdout:\n"
+                    f"{result.stdout or '(empty)'}\n\n"
+                    "stderr:\n"
+                    f"{result.stderr or '(empty)'}"
+                ),
+            )
+
+            if not result.stage_file_path.exists():
+                self.ui.show_status(
+                    "Project bootstrap draft missing. Running repair attempt...",
+                    level="warn",
+                )
+                repair_result = self.operator.repair_stage_summary(
+                    stage=stage, original_prompt=prompt,
+                    original_result=result, paths=paths, attempt_no=attempt_no,
+                )
+                result = repair_result
+
+            if not result.stage_file_path.exists():
+                fallback_text = "\n\n".join(
+                    part for part in [result.stdout, result.stderr] if part
+                )
+                result = self._materialize_missing_stage_draft(
+                    paths=paths, stage=stage, attempt_no=attempt_no,
+                    source="project bootstrap attempt and repair", fallback_text=fallback_text,
+                )
+
+            stage_markdown = read_text(result.stage_file_path)
+            suggestions = parse_refinement_suggestions(stage_markdown)
+            self._display_stage_output(stage, stage_markdown)
+            choice = self._ask_choice(suggestions)
+            append_log_entry(paths.logs, f"project_bootstrap attempt {attempt_no} user_choice", f"choice: {choice}")
+
+            if choice in {"1", "2", "3"}:
+                selected = suggestions[int(choice) - 1]
+                revision_feedback = (
+                    "Continue the project bootstrap conversation and improve the stage assessments. "
+                    "Do not discard correct parts. Address this refinement request:\n"
+                    f"{selected}"
+                )
+                continue_session = True
+                attempt_no += 1
+                continue
+
+            if choice == "4":
+                custom_feedback = self._read_multiline_feedback()
+                revision_feedback = (
+                    "Continue the project bootstrap conversation and improve the stage assessments. "
+                    "Preserve correct parts unless the feedback requires changing them. "
+                    "Address this user feedback:\n"
+                    f"{custom_feedback}"
+                )
+                append_log_entry(paths.logs, f"project_bootstrap attempt {attempt_no} custom_feedback", custom_feedback)
+                continue_session = True
+                attempt_no += 1
+                continue
+
+            if choice == "5":
+                # Append bootstrap summary to memory
+                bootstrap_context = format_project_context_for_prompt(paths)
+                if bootstrap_context:
+                    append_approved_stage_summary(paths.memory, stage, stage_markdown)
+                append_log_entry(paths.logs, "project_bootstrap_approved", "Project bootstrap approved.")
+                self.ui.show_status("Approved project bootstrap.", level="success")
+
+                # Determine start stage from Claude's corrected assessments
+                from .project_bootstrap import load_recommended_entry_stage
+                entry = load_recommended_entry_stage(paths)
+                entry_stage_num = entry if entry is not None else scan_result.recommended_entry_stage
+                for s in STAGES:
+                    if s.number == entry_stage_num:
+                        self.ui.show_status(
+                            f"Starting from {s.stage_title} based on project bootstrap.",
+                            level="info",
+                        )
+                        return s
+                return STAGES[0]
+
+            if choice == "6":
+                return None
+
+    def _build_project_bootstrap_prompt(
+        self,
+        paths: RunPaths,
+        stage: StageSpec,
+        scan_text: str,
+        project_root: Path,
+        revision_feedback: str | None,
+        continue_session: bool,
+    ) -> str:
+        template = load_prompt_template(self.prompt_dir, stage)
+        stage_template = format_stage_template(template, stage, paths)
+
+        if continue_session:
+            return build_continuation_prompt(
+                stage, stage_template, paths,
+                handoff_context="",
+                revision_feedback=revision_feedback,
+            )
+
+        user_request = read_text(paths.user_input)
+        project_section = (
+            f"# Existing Project Repository\n\n"
+            f"**Project root:** `{project_root}`\n\n"
+            f"{scan_text}"
+        )
+
+        sections = [
+            "# Stage Instructions",
+            stage_template.strip(),
+            "# Required Stage Summary Format",
+            (
+                "You must create or overwrite the stage summary markdown file using exactly the "
+                "top-level heading order below. Do not omit any section. Use exactly 3 numbered "
+                "refinement suggestions and exactly the fixed 6 option lines."
+            ),
+            "```md\n" + required_stage_output_template(stage).strip() + "\n```",
+            "# Original User Request",
+            user_request.strip(),
+            project_section,
+            "# Revision Feedback",
+            revision_feedback.strip() if revision_feedback else "None.",
+        ]
+        return "\n\n".join(sections).strip() + "\n"
 
     # ------------------------------------------------------------------
     # Regular stages (01–08)
@@ -715,6 +924,16 @@ class ResearchManager:
                 stage_template.rstrip()
                 + "\n\n## Writing Manifest\n\n"
                 + format_manifest_for_prompt(manifest)
+                + "\n"
+            )
+
+        # Inject project bootstrap context if available
+        project_context = format_project_context_for_prompt(paths)
+        if project_context and stage.number >= 1:
+            stage_template = (
+                stage_template.rstrip()
+                + "\n\n# Existing Project Context (from repo bootstrap)\n\n"
+                + project_context
                 + "\n"
             )
 
