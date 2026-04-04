@@ -52,6 +52,7 @@ class RunPaths:
     artifacts_dir: Path
     notes_dir: Path
     reviews_dir: Path
+    profile_dir: Path
     intake_context: Path
 
     def stage_file(self, stage: StageSpec) -> Path:
@@ -176,6 +177,7 @@ def build_run_paths(run_root: Path) -> RunPaths:
         artifacts_dir=workspace_root / "artifacts",
         notes_dir=workspace_root / "notes",
         reviews_dir=workspace_root / "reviews",
+        profile_dir=workspace_root / "profile",
         intake_context=run_root / "intake_context.json",
     )
 
@@ -207,6 +209,7 @@ def workspace_dirs(paths: RunPaths) -> list[Path]:
         paths.artifacts_dir,
         paths.notes_dir,
         paths.reviews_dir,
+        paths.profile_dir,
     ]
 
 
@@ -361,6 +364,7 @@ def format_stage_template(template: str, stage: StageSpec, paths: RunPaths) -> s
         "{{WORKSPACE_ARTIFACTS_DIR}}": str(paths.artifacts_dir.resolve()),
         "{{WORKSPACE_NOTES_DIR}}": str(paths.notes_dir.resolve()),
         "{{WORKSPACE_REVIEWS_DIR}}": str(paths.reviews_dir.resolve()),
+        "{{WORKSPACE_PROFILE_DIR}}": str(paths.profile_dir.resolve()),
         "{{SELECTED_VENUE}}": selected_venue_key(paths),
     }
 
